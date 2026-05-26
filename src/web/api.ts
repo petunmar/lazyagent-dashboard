@@ -1,0 +1,103 @@
+import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, Stats } from "./types";
+import { extensionApiBase } from "./utils";
+
+export class LazyagentBrowserClient {
+  readonly baseUrl: string;
+  private token = "";
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+  }
+
+  async authInfo(): Promise<AuthInfo> {
+    const res = await fetch(`${this.baseUrl}/api/auth`);
+    if (!res.ok) throw new Error(`GET /api/auth failed: ${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  async setPassphrase(passphrase: string): Promise<string> {
+    const auth = await this.authInfo();
+    this.token = await deriveToken(passphrase, auth);
+    return this.token;
+  }
+
+  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!this.token) throw new Error("Connect first");
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${this.token}`);
+    const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
+    if (!res.ok) throw new Error(`${init.method || "GET"} ${path} failed: ${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  sessions(): Promise<SessionItem[]> { return this.request<SessionItem[]>("/api/sessions"); }
+  session(id: string): Promise<SessionDetail> { return this.request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`); }
+  stats(): Promise<Stats> { return this.request<Stats>("/api/stats"); }
+
+  eventsUrl(): string {
+    if (!this.token) throw new Error("Connect first");
+    return `${this.baseUrl}/api/events?token=${encodeURIComponent(this.token)}`;
+  }
+}
+
+export async function fetchSessionEvents(id: string, limit: number): Promise<RawSessionEvents> {
+  const res = await fetch(`${extensionApiBase()}/api/session-events/${encodeURIComponent(id)}?limit=${limit}`);
+  if (!res.ok) throw new Error(`raw transcript failed: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchDirectory(path: string): Promise<DirectoryListing> {
+  const res = await fetch(`${extensionApiBase()}/api/directories?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchSessionNames(): Promise<Record<string, string>> {
+  const res = await fetch(`${extensionApiBase()}/api/session-names`);
+  const contentType = res.headers.get("content-type") || "";
+  if (!res.ok || !contentType.includes("application/json")) return {};
+  return ((await res.json()) as { names: Record<string, string> }).names || {};
+}
+
+export async function renameSession(sessionId: string, body: { name?: string; auto?: boolean }): Promise<{ name: string; names: Record<string, string> }> {
+  const res = await fetch(`${extensionApiBase()}/api/session-names/${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function submitAgent(mode: "start" | "message", body: Record<string, unknown>): Promise<AgentRun> {
+  const endpoint = mode === "message" ? "/api/agents/message" : "/api/agents/start";
+  const res = await fetch(`${extensionApiBase()}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchAgentRuns(): Promise<AgentRun[]> {
+  const res = await fetch(`${extensionApiBase()}/api/agent-runs`);
+  if (!res.ok) throw new Error(`runs failed: ${res.status}`);
+  return ((await res.json()) as { runs: AgentRun[] }).runs;
+}
+
+export async function fetchPiResources(cwd: string): Promise<PiResourcesPayload> {
+  const res = await fetch(`${extensionApiBase()}/api/pi-resources?cwd=${encodeURIComponent(cwd)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function deriveToken(passphrase: string, auth: AuthInfo): Promise<string> {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey("raw", enc.encode(passphrase.trim()), { name: "PBKDF2" }, false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: enc.encode(auth.salt), iterations: auth.iterations }, baseKey, auth.key_length * 8);
+  const bytes = new Uint8Array(bits);
+  let raw = "";
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}

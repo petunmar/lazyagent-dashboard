@@ -9,3 +9,4 @@
 - **Agent Detail** — the drill-down view for one Agent's metadata and transcript.
 - **Command Modal** — a temporary composer used to start a new Agent or send a follow-up to the selected Agent without leaving the current view.
 - **Live Transcript** — the chronological activity stream for the selected Agent, including messages, reasoning markers, tool calls, and tool results when available.
+- **Pi Resources** — the installed Pi skills and extensions available to inspect from Agent Monitor.
