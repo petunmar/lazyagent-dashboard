@@ -503,6 +503,10 @@ function bindEvents(): void {
     });
   });
   app.querySelector<HTMLButtonElement>("[data-refresh-pi-resources]")?.addEventListener("click", () => void loadPiResources(true));
+  bindTranscriptModeEvents();
+}
+
+function bindTranscriptModeEvents(): void {
   app.querySelectorAll<HTMLButtonElement>("[data-transcript-mode]").forEach(button => {
     button.addEventListener("click", () => {
       state.transcriptMode = (button.dataset.transcriptMode as TranscriptMode) || "recent";
@@ -699,37 +703,52 @@ function isDetail(s: SessionItem | SessionDetail): s is SessionDetail {
 }
 
 function rawTranscriptCard(session = selectedSession()): string {
-  const raw = state.rawEvents;
-  const detail = state.selectedDetail;
   return `
     <div class="transcript-body" aria-live="polite">
-      <div class="transcript-meta">
-        <span>${raw ? transcriptSummary(raw) : "Loading raw transcript…"}</span>
-        <div class="transcript-tools">
-          <button class="pill ${state.transcriptMode === "recent" ? "active" : ""}" type="button" data-transcript-mode="recent">latest</button>
-          <button class="pill ${state.transcriptMode === "full" ? "active" : ""}" type="button" data-transcript-mode="full">full transcript</button>
-        </div>
-      </div>
-      ${raw?.file ? `<code class="transcript-file">${escapeHtml(raw.file)}</code>` : ""}
-      ${state.transcriptMode === "full" && detail ? `
-        <div class="mini-cards">
-          <section>
-            <h3>Recent messages</h3>
-            ${detail.recent_messages.length ? detail.recent_messages.map(messageRow).join("") : `<p class="empty">No recent messages exposed by lazyagent.</p>`}
-          </section>
-          <section>
-            <h3>Recent tool calls</h3>
-            ${detail.recent_tools.length ? detail.recent_tools.map(toolRow).join("") : `<p class="empty">No recent tool calls exposed by lazyagent.</p>`}
-          </section>
-        </div>
-      ` : ""}
-      <section class="timeline-block raw-events">
-        <h3>Raw session events</h3>
-        ${raw ? raw.events.map(rawEventRow).join("") : `<p class="empty">Reading pi JSONL transcript from disk…</p>`}
-      </section>
+      ${rawTranscriptBodyContent()}
     </div>
     ${transcriptComposer(session)}
   `;
+}
+
+function rawTranscriptBodyContent(): string {
+  const raw = state.rawEvents;
+  const detail = state.selectedDetail;
+  return `
+    <div class="transcript-meta">
+      <span>${raw ? transcriptSummary(raw) : "Loading raw transcript…"}</span>
+      <div class="transcript-tools">
+        <button class="pill ${state.transcriptMode === "recent" ? "active" : ""}" type="button" data-transcript-mode="recent">latest</button>
+        <button class="pill ${state.transcriptMode === "full" ? "active" : ""}" type="button" data-transcript-mode="full">full transcript</button>
+      </div>
+    </div>
+    ${raw?.file ? `<code class="transcript-file">${escapeHtml(raw.file)}</code>` : ""}
+    ${state.transcriptMode === "full" && detail ? `
+      <div class="mini-cards">
+        <section>
+          <h3>Recent messages</h3>
+          ${detail.recent_messages.length ? detail.recent_messages.map(messageRow).join("") : `<p class="empty">No recent messages exposed by lazyagent.</p>`}
+        </section>
+        <section>
+          <h3>Recent tool calls</h3>
+          ${detail.recent_tools.length ? detail.recent_tools.map(toolRow).join("") : `<p class="empty">No recent tool calls exposed by lazyagent.</p>`}
+        </section>
+      </div>
+    ` : ""}
+    <section class="timeline-block raw-events">
+      <h3>Raw session events</h3>
+      ${raw ? raw.events.map(rawEventRow).join("") : `<p class="empty">Reading pi JSONL transcript from disk…</p>`}
+    </section>
+  `;
+}
+
+function updateRawTranscriptBody(): void {
+  const container = transcriptBody();
+  if (!container) return;
+  const wasNearBottom = isTranscriptNearBottom();
+  container.innerHTML = rawTranscriptBodyContent();
+  bindTranscriptModeEvents();
+  restoreTranscriptPosition(wasNearBottom);
 }
 
 function transcriptSummary(raw: RawSessionEvents): string {
@@ -1015,13 +1034,14 @@ async function loadRawEvents(): Promise<void> {
     if (state.selectedId === id) {
       state.rawEvents = raw;
       state.cardTools[id] = extractToolNames(raw);
-      render();
+      state.error = "";
+      updateRawTranscriptBody();
     }
   } catch (error) {
     if (state.selectedId === id) {
       state.rawEvents = null;
       state.error = error instanceof Error ? error.message : String(error);
-      render();
+      updateRawTranscriptBody();
     }
   }
 }
@@ -1042,7 +1062,7 @@ async function loadVisibleCardTools(): Promise<void> {
       state.loadingCardTools.delete(id);
     }
   }));
-  render();
+  if (state.view === "dashboard" && !state.modal) render();
 }
 
 async function fetchSessionEvents(id: string, limit = state.transcriptMode === "full" ? 1000 : 40): Promise<RawSessionEvents> {
