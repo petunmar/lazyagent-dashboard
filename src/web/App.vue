@@ -17,6 +17,7 @@ const totalCost = computed(() => state.sessions.reduce((sum, session) => sum + (
 
 onMounted(() => {
   window.addEventListener("popstate", monitor.handlePopstate);
+  void monitor.loadWidgets();
   if (state.view === "pi-resources") void monitor.loadPiResources();
 });
 onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate));

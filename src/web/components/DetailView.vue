@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import { displaySessionName, eventBody, eventTitle, relativeTime, shortId } from "../utils";
 
@@ -7,6 +8,7 @@ const props = defineProps<{ monitor: ReturnType<typeof useAgentMonitor> }>();
 const state = props.monitor.state;
 const selected = computed(() => props.monitor.selectedSession.value || state.sessions[0]);
 const name = computed(() => selected.value ? displaySessionName(selected.value, state.sessionNames) : "");
+const topWidgets = computed(() => state.widgets.filter(widget => widget.slots.includes("detail:top")));
 const transcriptSummary = computed(() => {
   const raw = state.rawEvents;
   if (!raw) return "Loading raw transcript…";
@@ -32,6 +34,10 @@ async function submitChat() {
         </dl>
         <p v-if="!state.selectedDetail" class="empty loading">Loading detail…</p>
       </aside>
+      <section class="detail-main">
+        <div v-if="topWidgets.length" class="widget-strip" aria-label="Agent detail widgets">
+          <WidgetFrame v-for="widget in topWidgets" :key="widget.id" :widget="widget" slot-name="detail:top" :session-id="selected.session_id" :monitor="monitor" />
+        </div>
       <section class="console-card transcript-card inline-transcript">
         <div class="console-head"><span>stream</span><h2>Live transcript</h2></div>
         <div class="transcript-body" aria-live="polite">
@@ -44,6 +50,7 @@ async function submitChat() {
           <textarea id="chat-prompt" v-model="state.chatDraft" rows="3" :placeholder="`Message ${name}…`" @keydown.meta.enter.prevent="submitChat" @keydown.ctrl.enter.prevent="submitChat"></textarea>
           <div class="chat-compose-actions"><span>{{ shortId(selected.session_id) }} · ⌘/ctrl+enter sends</span><button name="mode" value="message" type="submit">send ↵</button></div>
         </form>
+      </section>
       </section>
     </section>
   </template>

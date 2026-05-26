@@ -3,6 +3,7 @@ export type ViewMode = "dashboard" | "detail" | "pi-resources";
 export type ModalType = "launch" | "message" | "connect" | "rename";
 export type TranscriptMode = "recent" | "full";
 export type PiResourceKind = "all" | "skill" | "extension";
+export type WidgetSlot = "dashboard:top" | "detail:top";
 
 export type ToolSparkItem = { name: string; timestamp?: string; detail: string };
 export type DirectoryEntry = { name: string; path: string };
@@ -113,6 +114,21 @@ export type AgentRun = {
   exit_code: number | null;
   stdout_tail: string;
   stderr_tail: string;
+};
+
+export type WidgetManifest = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  slots: WidgetSlot[];
+  entry: string;
+};
+
+export type WidgetStatus = {
+  id: string;
+  pending?: number;
+  session_highlights?: string[];
 };
 
 export type EventsUpdate = { sessions: SessionItem[]; stats: Stats };

@@ -14,7 +14,7 @@ function height(name: string, i: number) { return `${18 + ((name.length * 5 + i 
 </script>
 
 <template>
-  <article class="agent-card" :class="[sessionTone(session), { selected: session.session_id === state.selectedId }]" tabindex="0" role="button" :aria-label="`Open ${name} detail`" @click="monitor.selectSession(session.session_id)">
+  <article class="agent-card" :class="[sessionTone(session), { selected: session.session_id === state.selectedId, 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id) }]" tabindex="0" role="button" :aria-label="`Open ${name} detail`" @click="monitor.selectSession(session.session_id)">
     <button class="card-hit" type="button" :aria-label="`Select ${name}`"></button>
     <header class="card-head">
       <div class="agent-title"><span class="agent-dot"></span><h3>{{ name }}</h3></div>

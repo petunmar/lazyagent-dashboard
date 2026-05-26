@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, Stats } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, Stats, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -90,6 +90,18 @@ export async function fetchPiResources(cwd: string): Promise<PiResourcesPayload>
   const res = await fetch(`${extensionApiBase()}/api/pi-resources?cwd=${encodeURIComponent(cwd)}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function fetchWidgets(): Promise<WidgetManifest[]> {
+  const res = await fetch(`${extensionApiBase()}/api/widgets`);
+  if (!res.ok) throw new Error(`widgets failed: ${res.status}`);
+  return ((await res.json()) as { widgets: WidgetManifest[] }).widgets;
+}
+
+export async function fetchWidgetStatuses(): Promise<WidgetStatus[]> {
+  const res = await fetch(`${extensionApiBase()}/api/widgets/status`);
+  if (!res.ok) throw new Error(`widget status failed: ${res.status}`);
+  return ((await res.json()) as { widgets: WidgetStatus[] }).widgets;
 }
 
 async function deriveToken(passphrase: string, auth: AuthInfo): Promise<string> {

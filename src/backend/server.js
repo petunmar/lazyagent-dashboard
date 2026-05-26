@@ -4,8 +4,9 @@ import { spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const host = process.env.EXTENSION_HOST || "127.0.0.1";
 const port = Number(process.env.EXTENSION_PORT || 5174);
 const piSessionsDir = process.env.PI_SESSIONS_DIR || path.join(homedir(), ".pi", "agent", "sessions");
@@ -13,6 +14,9 @@ const maxEvents = Number(process.env.MAX_SESSION_EVENTS || 250);
 const maxToolResultChars = Number(process.env.MAX_TOOL_RESULT_CHARS || 12_000);
 const maxThinkingChars = Number(process.env.MAX_THINKING_CHARS || 2_000);
 const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "session-names.json");
+const widgetDirs = (process.env.WIDGETS_DIR || path.join(projectRoot, "widgets")).split(path.delimiter).map(value => expandUserPath(value.trim())).filter(Boolean);
+const widgetStateDir = process.env.WIDGET_STATE_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "widgets");
+const agentAppendSystemPrompt = process.env.AGENT_APPEND_SYSTEM_PROMPT || "";
 const tennisPlayers = [
   "Serena Williams", "Roger Federer", "Rafael Nadal", "Novak Djokovic", "Steffi Graf",
   "Martina Navratilova", "Billie Jean King", "Chris Evert", "Pete Sampras", "Björn Borg",
@@ -20,6 +24,7 @@ const tennisPlayers = [
   "Iga Świątek", "Carlos Alcaraz", "Jannik Sinner", "Coco Gauff", "Aryna Sabalenka"
 ];
 const runs = new Map();
+const widgetsReady = loadWidgets();
 
 const server = createServer(async (req, res) => {
   setCors(res);
@@ -31,6 +36,28 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
 
   try {
+    const widgets = await widgetsReady;
+
+    if (req.method === "GET" && url.pathname === "/api/widgets") {
+      writeJson(res, 200, { widgets: widgets.map(({ manifest }) => manifest) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/widgets/status") {
+      writeJson(res, 200, { widgets: await widgetStatuses(widgets) });
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/widgets/")) {
+      const handled = await handleWidgetApi(widgets, req, res, url);
+      if (handled) return;
+    }
+
+    if (url.pathname.startsWith("/widgets/")) {
+      const handled = await serveWidgetAsset(widgets, url.pathname, res);
+      if (handled) return;
+    }
+
     if (req.method === "GET" && url.pathname.startsWith("/api/session-events/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/session-events/".length));
       const limit = parseLimit(url.searchParams.get("limit"));
@@ -102,6 +129,7 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`lazyagent-extension backend listening on http://${host}:${port}`);
   console.log(`reading pi sessions from ${piSessionsDir}`);
+  console.log(`loading widgets from ${widgetDirs.join(", ") || "(none)"}`);
 });
 
 async function startAgent(body) {
@@ -113,7 +141,7 @@ async function startAgent(body) {
 
   const sessionDir = sessionDirForCwd(cwd);
   await mkdir(sessionDir, { recursive: true });
-  const args = ["-p", "--session-dir", sessionDir];
+  const args = await piRunArgs(["-p", "--session-dir", sessionDir]);
   if (body?.model) args.push("--model", String(body.model));
   if (body?.thinking) args.push("--thinking", String(body.thinking));
   if (body?.tools) args.push("--tools", String(body.tools));
@@ -134,8 +162,30 @@ async function sendAgentMessage(body) {
 
   const sessionFile = await findSessionFile(sessionId);
   const sessionDir = path.dirname(sessionFile);
-  const args = ["-p", "--session-dir", sessionDir, "--session", sessionFile, prompt];
+  const args = await piRunArgs(["-p", "--session-dir", sessionDir, "--session", sessionFile]);
+  args.push(prompt);
   return spawnPiRun({ kind: "message", cwd, sessionDir, args, prompt, sessionId });
+}
+
+async function piRunArgs(baseArgs) {
+  const prompts = [];
+  if (agentAppendSystemPrompt.trim()) prompts.push(agentAppendSystemPrompt.trim());
+  for (const widget of await widgetsReady) {
+    const prompt = await widgetSystemPrompt(widget);
+    if (prompt) prompts.push(prompt);
+  }
+  const args = [...baseArgs];
+  for (const prompt of prompts) args.push("--append-system-prompt", prompt);
+  return args;
+}
+
+async function widgetSystemPrompt(widget) {
+  if (typeof widget.backend?.systemPrompt === "string") return widget.backend.systemPrompt.trim();
+  if (typeof widget.backend?.systemPrompt === "function") {
+    const prompt = await widget.backend.systemPrompt(widgetContext(widget));
+    return typeof prompt === "string" ? prompt.trim() : "";
+  }
+  return "";
 }
 
 function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "" }) {
@@ -574,9 +624,169 @@ function truncate(value, max) {
   return `${value.slice(0, max)}\n… truncated ${value.length - max} chars`;
 }
 
+async function loadWidgets() {
+  const widgets = [];
+  for (const dir of widgetDirs) {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(error => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const root = path.join(dir, entry.name);
+      const manifest = await readWidgetManifest(root).catch(error => {
+        console.warn(`skipping widget ${root}: ${error.message}`);
+        return null;
+      });
+      if (!manifest) continue;
+      const backendFile = path.join(root, manifest.backend || "backend.js");
+      const backend = await importIfExists(backendFile);
+      widgets.push({ manifest, root, backend });
+    }
+  }
+  return widgets;
+}
+
+async function readWidgetManifest(root) {
+  const manifest = JSON.parse(await readFile(path.join(root, "widget.json"), "utf8"));
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(manifest.id || "")) throw new Error("widget id must be kebab-case");
+  return {
+    id: manifest.id,
+    name: String(manifest.name || manifest.id),
+    description: String(manifest.description || ""),
+    version: String(manifest.version || "0.0.0"),
+    slots: Array.isArray(manifest.slots) ? manifest.slots : [],
+    entry: String(manifest.entry || "index.html"),
+    backend: manifest.backend ? String(manifest.backend) : "backend.js",
+  };
+}
+
+async function importIfExists(file) {
+  try {
+    await access(file);
+    return import(`${pathToFileURL(file).href}?t=${Date.now()}`);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function widgetStatuses(widgets) {
+  const statuses = [];
+  for (const widget of widgets) {
+    if (typeof widget.backend?.status !== "function") continue;
+    statuses.push({ id: widget.manifest.id, ...(await widget.backend.status(widgetContext(widget))) });
+  }
+  return statuses;
+}
+
+async function handleWidgetApi(widgets, req, res, url) {
+  const [, , , id, ...rest] = url.pathname.split("/");
+  const widget = widgets.find(item => item.manifest.id === id);
+  if (!widget) return false;
+  if (typeof widget.backend?.handle !== "function") return false;
+  const widgetUrl = new URL(url);
+  widgetUrl.pathname = `/${rest.join("/")}`;
+  return !!(await widget.backend.handle(req, res, widgetUrl, widgetContext(widget)));
+}
+
+async function serveWidgetAsset(widgets, requestPath, res) {
+  const [, , id, ...rest] = requestPath.split("/");
+  const widget = widgets.find(item => item.manifest.id === id);
+  if (!widget) return false;
+  const relative = rest.join("/") || widget.manifest.entry;
+  const file = path.resolve(widget.root, relative);
+  if (!file.startsWith(widget.root)) return false;
+  try {
+    const info = await stat(file);
+    if (!info.isFile()) return false;
+  } catch {
+    return false;
+  }
+  res.writeHead(200, { "Content-Type": contentType(file) });
+  createReadStream(file).pipe(res);
+  return true;
+}
+
+function widgetContext(widget) {
+  const stateDir = path.join(widgetStateDir, widget.manifest.id);
+  return { stateDir, readJson, writeJson, httpError, sendAgentMessage, listAgentQuestionCandidates };
+}
+
+async function listAgentQuestionCandidates() {
+  const candidates = [];
+  const projects = await readdir(piSessionsDir, { withFileTypes: true }).catch(() => []);
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const dir = path.join(piSessionsDir, project.name);
+    const files = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
+      const full = path.join(dir, file.name);
+      const sessionId = file.name.replace(/\.jsonl$/, "");
+      const parsed = parseJsonl(await readFile(full, "utf8"), full);
+      const sessionEvent = parsed.events.find(event => event.kind === "session");
+      for (const event of parsed.events) {
+        if (event.kind !== "assistant" || !event.text) continue;
+        for (const question of extractQuestionSchemas(event.text)) {
+          candidates.push({
+            id: `schema:${sessionId}:${event.line}:${stableHash(JSON.stringify(question))}`,
+            session_id: sessionId,
+            cwd: sessionEvent?.cwd || path.resolve(dir),
+            question: question.question,
+            details: question.details || "",
+            options: question.options,
+            created_at: event.timestamp || new Date().toISOString(),
+          });
+        }
+      }
+    }
+  }
+  candidates.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return candidates;
+}
+
+function extractQuestionSchemas(text) {
+  const schemas = [];
+  const fencePattern = /```(?:lazyagent-question|question-queue)\s*\n([\s\S]*?)```/gi;
+  for (const match of text.matchAll(fencePattern)) {
+    const parsed = parseQuestionSchema(match[1]);
+    if (parsed) schemas.push(parsed);
+  }
+  return schemas;
+}
+
+function parseQuestionSchema(raw) {
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (parsed?.widget !== "question-queue" && parsed?.lazyagent_widget !== "question-queue") return null;
+    const question = String(parsed.question || "").trim();
+    const options = Array.isArray(parsed.options) ? parsed.options.map(normalizeQuestionOption).filter(Boolean) : [];
+    if (!question || !options.length) return null;
+    return { question, details: String(parsed.details || "").trim(), options };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeQuestionOption(option) {
+  if (typeof option === "string") return { label: option, value: option };
+  if (!option || typeof option !== "object") return null;
+  const label = String(option.label || option.value || "").trim();
+  const value = String(option.value || option.label || "").trim();
+  if (!label || !value) return null;
+  return { label, value, description: typeof option.description === "string" ? option.description : "" };
+}
+
+function stableHash(value) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index++) hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  return (hash >>> 0).toString(36);
+}
+
 async function serveStatic(requestPath, res) {
   if (requestPath.startsWith("/api/")) return false;
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+  const root = path.join(projectRoot, "dist");
   const safePath = requestPath === "/" ? "/index.html" : requestPath;
   const file = path.resolve(root, `.${safePath}`);
   if (!file.startsWith(root)) return false;

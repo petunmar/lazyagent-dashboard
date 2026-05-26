@@ -229,6 +229,18 @@ button:hover { filter: brightness(1.08); }
 .pill.active { color: var(--lime); border-color: var(--lime); }
 .pill.create { background: var(--lime); color: #07100b; border-color: var(--lime); }
 
+.widget-strip {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.widget-frame {
+  width: 100%;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  display: block;
+}
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -260,6 +272,7 @@ button:hover { filter: brightness(1.08); }
   cursor: pointer;
 }
 .low-focus-row:hover { border-color: var(--line); background: rgba(231, 255, 88, .04); }
+.low-focus-row.widget-alert { border-color: rgba(45, 212, 191, .65); background: rgba(45, 212, 191, .08); }
 .low-focus-row strong {
   display: block;
   color: var(--cream);
@@ -296,6 +309,8 @@ button:hover { filter: brightness(1.08); }
   pointer-events: none;
 }
 .agent-card.selected, .agent-card.working { border-color: var(--lime); }
+.agent-card.widget-alert { border-color: #2dd4bf; box-shadow: 0 24px 65px var(--shadow), 0 0 0 1px rgba(45, 212, 191, .32), 0 0 34px rgba(45, 212, 191, .12); }
+.agent-card.widget-alert::before { content: "question"; position: absolute; top: 14px; right: 14px; z-index: 3; border-radius: 999px; background: #2dd4bf; color: #042f2e; padding: 5px 9px; font: 900 10px "JetBrains Mono", monospace; letter-spacing: .1em; text-transform: uppercase; }
 .agent-card.errored { border-color: var(--orange); }
 .agent-card.idle { opacity: .82; }
 .card-hit {
@@ -463,6 +478,7 @@ button:hover { filter: brightness(1.08); }
   gap: 18px;
   align-items: start;
 }
+.detail-main { min-width: 0; }
 .command-console {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(360px, .75fr);

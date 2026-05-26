@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, Stats, ToolSparkItem, TranscriptMode, ViewMode } from "../types";
+import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -30,6 +30,9 @@ type State = {
   piResourcesError: string;
   piResourceFilter: PiResourceKind;
   selectedResourceKey: string;
+  widgets: WidgetManifest[];
+  widgetStatuses: WidgetStatus[];
+  widgetFrameHeights: Record<string, number>;
 };
 
 function initialView(): ViewMode {
@@ -63,6 +66,9 @@ const state = reactive<State>({
   piResourcesError: "",
   piResourceFilter: "all",
   selectedResourceKey: "",
+  widgets: [],
+  widgetStatuses: [],
+  widgetFrameHeights: {},
 });
 
 let client: LazyagentBrowserClient | null = null;
@@ -90,6 +96,7 @@ export function useAgentMonitor() {
       state.connected = true;
       state.status = "connected";
       state.modal = null;
+      await loadWidgets();
       await refresh();
       connectEvents();
     } catch (error) {
@@ -112,6 +119,7 @@ export function useAgentMonitor() {
       void loadSelectedDetail();
       void loadRawEvents();
       void loadVisibleCardTools();
+      void loadWidgetStatuses();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
     }
@@ -251,6 +259,25 @@ export function useAgentMonitor() {
     }
   }
 
+  async function loadWidgets(): Promise<void> {
+    try {
+      state.widgets = await fetchWidgets();
+      await loadWidgetStatuses();
+    } catch { /* widgets are optional */ }
+  }
+
+  async function loadWidgetStatuses(): Promise<void> {
+    try { state.widgetStatuses = await fetchWidgetStatuses(); } catch { /* widgets are optional */ }
+  }
+
+  function sessionHasWidgetAlert(sessionId: string): boolean {
+    return state.widgetStatuses.some(status => status.session_highlights?.includes(sessionId));
+  }
+
+  function setWidgetFrameHeight(key: string, height: number): void {
+    state.widgetFrameHeights[key] = Math.max(120, Math.min(900, height));
+  }
+
   async function refreshRuns(): Promise<void> {
     try {
       const next = await fetchAgentRuns();
@@ -316,6 +343,7 @@ export function useAgentMonitor() {
       void loadSelectedDetail();
       void loadRawEvents();
       void loadVisibleCardTools();
+      void loadWidgetStatuses();
     });
     events.addEventListener("error", () => { state.status = "reconnecting"; });
   }
@@ -347,6 +375,10 @@ export function useAgentMonitor() {
     loadVisibleCardTools,
     renameSelected,
     sendAgent,
+    loadWidgets,
+    loadWidgetStatuses,
+    sessionHasWidgetAlert,
+    setWidgetFrameHeight,
     refreshRuns,
     openDirectoryPicker,
     selectDirectory,
