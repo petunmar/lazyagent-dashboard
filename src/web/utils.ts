@@ -3,7 +3,8 @@ import type { SessionDetail, SessionFilter, SessionItem, SessionEvent, ToolSpark
 export const lowFocusAfterMinutes = 10;
 
 export function extensionApiBase(): string {
-  if (location.port === "5174") return location.origin;
+  const local = location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  if (!local || location.port === "5174") return location.origin;
   return `${location.protocol}//${location.hostname}:5174`;
 }
 
