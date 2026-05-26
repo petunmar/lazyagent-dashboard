@@ -15,11 +15,15 @@ const subtitle = computed(() => state.view === "detail" ? "session detail" : sta
 const totalTokens = computed(() => state.selectedDetail ? state.selectedDetail.input_tokens + state.selectedDetail.output_tokens : 0);
 const totalCost = computed(() => state.spend?.today_usd ?? 0);
 const maxDailySpend = computed(() => Math.max(...(state.spend?.daily.map(day => day.cost_usd) || [0]), 0.001));
-const spendBars = computed(() => (state.spend?.daily || []).map(day => ({
-  ...day,
-  label: new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-  height: `${Math.max(4, (day.cost_usd / maxDailySpend.value) * 100)}%`,
-})));
+const spendBars = computed(() => (state.spend?.daily || []).map(day => {
+  const label = new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return {
+    ...day,
+    label,
+    tooltip: `${label}: ${formatMoney(day.cost_usd)}`,
+    height: `${Math.max(10, (day.cost_usd / maxDailySpend.value) * 42)}px`,
+  };
+}));
 const spendUpdated = computed(() => state.spend ? new Date(state.spend.generated_at).toLocaleTimeString() : "");
 
 onMounted(() => {
@@ -49,12 +53,8 @@ onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate)
           <dt>{{ formatMoney(totalCost) }}</dt><dd>today</dd>
           <div class="spend-popover" role="tooltip">
             <div class="spend-popover-head"><strong>real spend</strong><span>past 14 days</span></div>
-            <div class="spend-chart" aria-label="Spend over past 14 days">
-              <div v-for="day in spendBars" :key="day.date" class="spend-bar-wrap" :title="`${day.label}: ${formatMoney(day.cost_usd)}`">
-                <span class="spend-bar-value">{{ formatMoney(day.cost_usd) }}</span>
-                <span class="spend-bar" :style="{ height: day.height }"></span>
-                <span class="spend-bar-label">{{ day.label }}</span>
-              </div>
+            <div class="bars spend-bars" aria-label="Spend over past 14 days">
+              <i v-for="day in spendBars" :key="day.date" class="bar spend-bar" :style="{ height: day.height }" :data-tooltip="day.tooltip" :aria-label="day.tooltip" tabindex="0"></i>
             </div>
             <p>summed from Pi transcript usage costs{{ spendUpdated ? ` · updated ${spendUpdated}` : '' }}</p>
           </div>
