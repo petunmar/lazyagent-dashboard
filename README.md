@@ -22,8 +22,10 @@ This project is intended for local development. It does not require checked-in s
 
 - Do not commit `.env` files, API keys, bearer tokens, passphrases, local session dumps, or build output.
 - The backend binds to `127.0.0.1` by default.
-- The frontend stores the lazyagent API URL and passphrase in browser `localStorage` for convenience. Use a dedicated local passphrase and clear site data if you do not want it persisted.
-- The transcript backend reads from local `pi` session files and may display sensitive prompts, tool output, file paths, or code snippets. Avoid exposing it on a public network.
+- For public access, put nginx/Caddy/Hostinger TLS in front of the backend and enable dashboard password auth with `DASHBOARD_PASSWORD_HASH` and `DASHBOARD_AUTH_SECRET`.
+- Public deployments should expose only the dashboard port; keep lazyagent bound to `127.0.0.1` and use the dashboard's `/lazyagent` proxy.
+- The frontend stores the lazyagent API URL and passphrase in browser `localStorage` for convenience. Use a dedicated passphrase and clear site data if you do not want it persisted.
+- The transcript backend reads from local `pi` session files and may display sensitive prompts, tool output, file paths, or code snippets.
 
 ## Requirements
 
@@ -91,9 +93,53 @@ The backend uses environment variables for local paths and limits:
 | `WIDGETS_DIR` | `./widgets` | Widget folders to load, separated by the platform path delimiter |
 | `WIDGET_STATE_DIR` | `~/.pi/lazyagent-extension/widgets` | Local Widget state directory |
 | `AGENT_APPEND_SYSTEM_PROMPT` | empty | Extra global system prompt appended to `pi -p` runs launched from the dashboard; Widget-specific prompt guidance is provided by loaded Widgets |
+| `LAZYAGENT_URL` | `http://127.0.0.1:7421` | Upstream lazyagent API for the authenticated `/lazyagent` proxy |
+| `DASHBOARD_PASSWORD_HASH` | empty | Enables dashboard login when set with `DASHBOARD_AUTH_SECRET`; generate with `node scripts/hash-password.js 'password'` |
+| `DASHBOARD_AUTH_SECRET` | empty | Random HMAC secret for signed device cookies; generate with `openssl rand -base64 48` |
+| `DASHBOARD_AUTH_SECURE_COOKIES` | `true` | Adds `Secure` to auth cookies when requests arrive over HTTPS |
+| `DASHBOARD_AUTH_SESSION_DAYS` | `30` | How long a device stays logged in before it must enter the password again |
 | `MAX_SESSION_EVENTS` | `250` | Default max transcript events returned |
 | `MAX_TOOL_RESULT_CHARS` | `12000` | Tool result truncation limit |
 | `MAX_THINKING_CHARS` | `2000` | Thinking block truncation limit |
+
+## Public Hostinger deployment
+
+The production backend serves the built frontend and proxies lazyagent at `/lazyagent`, so browsers on other devices do not need direct access to port `7421`.
+
+1. Install dependencies and build once:
+
+```bash
+cd /home/petur/coding/lazyagent-extension
+npm install
+npm run build
+```
+
+2. Create private env files from the examples in `deploy/`:
+
+```bash
+sudo cp deploy/lazyagent-dashboard.env.example /etc/lazyagent-dashboard.env
+sudo cp deploy/lazyagent-api.env.example /etc/lazyagent-api.env
+node scripts/hash-password.js 'use-a-long-unique-password'
+openssl rand -base64 48
+sudo chmod 600 /etc/lazyagent-dashboard.env /etc/lazyagent-api.env
+```
+
+Paste the generated hash into `DASHBOARD_PASSWORD_HASH`, the random secret into `DASHBOARD_AUTH_SECRET`, and a separate lazyagent passphrase into `LAZYAGENT_API_PASSPHRASE`.
+
+3. Install and enable the services:
+
+```bash
+sudo cp deploy/lazyagent-api.service /etc/systemd/system/
+sudo cp deploy/lazyagent-dashboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lazyagent-api lazyagent-dashboard
+```
+
+Both services start on boot and use `RuntimeMaxSec=3h` with `Restart=always`, which gives them a clean restart every three hours.
+
+4. Put HTTPS in front of the dashboard only. Use `deploy/nginx-lazyagent-dashboard.conf.example` as the nginx site template, replace the domain and certificate paths, then reload nginx.
+
+5. Open the Hostinger link. The first visit from a new device shows the dashboard password screen. After login, connect the Lazyagent API with API URL `/lazyagent` and the passphrase from `/etc/lazyagent-api.env`.
 
 ## Local backend API
 

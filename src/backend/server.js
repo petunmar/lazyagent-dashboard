@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
+import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -17,6 +18,14 @@ const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), 
 const widgetDirs = (process.env.WIDGETS_DIR || path.join(projectRoot, "widgets")).split(path.delimiter).map(value => expandUserPath(value.trim())).filter(Boolean);
 const widgetStateDir = process.env.WIDGET_STATE_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "widgets");
 const agentAppendSystemPrompt = process.env.AGENT_APPEND_SYSTEM_PROMPT || "";
+const lazyagentUrl = (process.env.LAZYAGENT_URL || "http://127.0.0.1:7421").replace(/\/$/, "");
+const dashboardPasswordHash = process.env.DASHBOARD_PASSWORD_HASH || "";
+const dashboardAuthSecret = process.env.DASHBOARD_AUTH_SECRET || "";
+const authEnabled = Boolean(dashboardPasswordHash && dashboardAuthSecret);
+const authCookieName = process.env.DASHBOARD_AUTH_COOKIE || "lazyagent_dashboard_session";
+const authSessionDays = Math.max(1, Number(process.env.DASHBOARD_AUTH_SESSION_DAYS || 30));
+const authSecureCookies = parseBoolean(process.env.DASHBOARD_AUTH_SECURE_COOKIES, true);
+const loginAttempts = new Map();
 const tennisPlayers = [
   "Serena Williams", "Roger Federer", "Rafael Nadal", "Novak Djokovic", "Steffi Graf",
   "Martina Navratilova", "Billie Jean King", "Chris Evert", "Pete Sampras", "Björn Borg",
@@ -36,6 +45,33 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
 
   try {
+    if (req.method === "GET" && url.pathname === "/api/dashboard-auth/status") {
+      writeJson(res, 200, { enabled: authEnabled, authenticated: !authEnabled || isAuthenticated(req) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/dashboard-auth/login") {
+      const payload = await loginDashboard(req, res);
+      writeJson(res, 200, payload);
+      return;
+    }
+
+    if (authEnabled && !isAuthenticated(req)) {
+      if (req.method === "GET" && acceptsHtml(req)) {
+        serveLoginPage(res);
+      } else {
+        writeJson(res, 401, { error: "dashboard authentication required" });
+      }
+      return;
+    }
+
+    if (authEnabled) enforceSameOrigin(req);
+
+    if (url.pathname.startsWith("/lazyagent/")) {
+      await proxyLazyagent(req, res, url);
+      return;
+    }
+
     const widgets = await widgetsReady;
 
     if (req.method === "GET" && url.pathname === "/api/widgets") {
@@ -128,6 +164,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`lazyagent-extension backend listening on http://${host}:${port}`);
+  console.log(`proxying lazyagent API from ${lazyagentUrl} at /lazyagent`);
+  console.log(`dashboard password auth ${authEnabled ? "enabled" : "disabled (set DASHBOARD_PASSWORD_HASH and DASHBOARD_AUTH_SECRET for public access)"}`);
   console.log(`reading pi sessions from ${piSessionsDir}`);
   console.log(`loading widgets from ${widgetDirs.join(", ") || "(none)"}`);
 });
@@ -782,6 +820,154 @@ function stableHash(value) {
   let hash = 5381;
   for (let index = 0; index < value.length; index++) hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
   return (hash >>> 0).toString(36);
+}
+
+async function proxyLazyagent(req, res, url) {
+  const targetPath = url.pathname.slice("/lazyagent".length) || "/";
+  const target = `${lazyagentUrl}${targetPath}${url.search}`;
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!value) continue;
+    const lower = name.toLowerCase();
+    if (["host", "connection", "cookie", "content-length"].includes(lower)) continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+  }
+
+  const init = { method: req.method, headers };
+  if (!['GET', 'HEAD'].includes(req.method || 'GET')) {
+    init.body = await readRawBody(req);
+  }
+
+  const upstream = await fetch(target, init);
+  const responseHeaders = {};
+  for (const [name, value] of upstream.headers) {
+    if (["connection", "content-encoding", "content-length", "transfer-encoding"].includes(name.toLowerCase())) continue;
+    responseHeaders[name] = value;
+  }
+  res.writeHead(upstream.status, responseHeaders);
+  if (!upstream.body) {
+    res.end();
+    return;
+  }
+  for await (const chunk of upstream.body) res.write(Buffer.from(chunk));
+  res.end();
+}
+
+async function readRawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+async function loginDashboard(req, res) {
+  if (!authEnabled) return { ok: true, authenticated: true };
+  const key = clientKey(req);
+  const attempt = loginAttempts.get(key) || { count: 0, resetAt: 0 };
+  if (attempt.resetAt > Date.now() && attempt.count >= 8) throw httpError(429, "too many login attempts; wait and try again");
+  if (attempt.resetAt <= Date.now()) {
+    attempt.count = 0;
+    attempt.resetAt = Date.now() + 15 * 60 * 1000;
+  }
+
+  const body = await readJson(req);
+  const password = String(body?.password || "");
+  if (!verifyPassword(password, dashboardPasswordHash)) {
+    attempt.count += 1;
+    loginAttempts.set(key, attempt);
+    throw httpError(401, "invalid password");
+  }
+
+  loginAttempts.delete(key);
+  res.setHeader("Set-Cookie", serializeCookie(authCookieName, createAuthToken(), req));
+  return { ok: true, authenticated: true };
+}
+
+function isAuthenticated(req) {
+  const token = parseCookies(req.headers.cookie || "")[authCookieName];
+  return Boolean(token && verifyAuthToken(token));
+}
+
+function createAuthToken() {
+  const payload = Buffer.from(JSON.stringify({ iat: Date.now(), exp: Date.now() + authSessionDays * 86400_000, n: randomBytes(16).toString("base64url") })).toString("base64url");
+  const signature = createHmac("sha256", dashboardAuthSecret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyAuthToken(token) {
+  const [payload, signature] = String(token).split(".");
+  if (!payload || !signature) return false;
+  const expected = createHmac("sha256", dashboardAuthSecret).update(payload).digest("base64url");
+  if (!safeEqual(signature, expected)) return false;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return Number(parsed.exp) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function verifyPassword(password, encoded) {
+  try {
+    const parts = String(encoded).split("$");
+    if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+    const [, n, r, p, saltRaw, hashRaw] = parts;
+    const hash = Buffer.from(hashRaw, "base64url");
+    const derived = scryptSync(password, Buffer.from(saltRaw, "base64url"), hash.length, { N: Number(n), r: Number(r), p: Number(p) });
+    return safeEqual(derived, hash);
+  } catch {
+    return false;
+  }
+}
+
+function safeEqual(left, right) {
+  const a = Buffer.isBuffer(left) ? left : Buffer.from(String(left));
+  const b = Buffer.isBuffer(right) ? right : Buffer.from(String(right));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function parseCookies(header) {
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) continue;
+    cookies[part.slice(0, index).trim()] = decodeURIComponent(part.slice(index + 1).trim());
+  }
+  return cookies;
+}
+
+function serializeCookie(name, value, req) {
+  const secure = authSecureCookies && requestIsHttps(req);
+  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${authSessionDays * 86400}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
+}
+
+function requestIsHttps(req) {
+  return req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted;
+}
+
+function acceptsHtml(req) {
+  return String(req.headers.accept || "").includes("text/html") || String(req.url || "/") === "/";
+}
+
+function clientKey(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+}
+
+function enforceSameOrigin(req) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method || "")) return;
+  const origin = req.headers.origin;
+  if (!origin) return;
+  const expected = `${requestIsHttps(req) ? "https" : "http"}://${req.headers.host}`;
+  if (origin !== expected) throw httpError(403, "cross-origin write blocked");
+}
+
+function parseBoolean(value, fallback) {
+  if (value == null || value === "") return fallback;
+  return /^(1|true|yes|on)$/i.test(value);
+}
+
+function serveLoginPage(res) {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lazyagent Dashboard Login</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;font:16px system-ui,sans-serif}.card{width:min(92vw,420px);padding:28px;border:1px solid #27272a;border-radius:18px;background:#18181b;box-shadow:0 24px 80px #0008}h1{margin:0 0 8px;font-size:24px}p{color:#a1a1aa}input,button{width:100%;box-sizing:border-box;border-radius:12px;padding:12px 14px;font:inherit}input{border:1px solid #3f3f46;background:#09090b;color:#fff}button{margin-top:14px;border:0;background:#84cc16;color:#111827;font-weight:700;cursor:pointer}.error{min-height:22px;color:#fb7185}</style></head><body><form class="card"><h1>Lazyagent Dashboard</h1><p>Enter the dashboard password for this device.</p><input name="password" type="password" autocomplete="current-password" autofocus required><button>Unlock</button><p class="error" role="alert"></p></form><script>const f=document.querySelector('form'),e=document.querySelector('.error');f.addEventListener('submit',async ev=>{ev.preventDefault();e.textContent='';const r=await fetch('/api/dashboard-auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:f.password.value})});if(r.ok) location.reload(); else e.textContent='Invalid password or too many attempts.'});</script></body></html>`);
 }
 
 async function serveStatic(requestPath, res) {

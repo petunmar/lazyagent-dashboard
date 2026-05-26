@@ -40,7 +40,7 @@ function initialView(): ViewMode {
 }
 
 const state = reactive<State>({
-  baseUrl: localStorage.getItem("lazyagent.baseUrl") || "http://127.0.0.1:7421",
+  baseUrl: localStorage.getItem("lazyagent.baseUrl") || (location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "http://127.0.0.1:7421" : "/lazyagent"),
   passphrase: localStorage.getItem("lazyagent.passphrase") || "",
   connected: false,
   status: "offline",

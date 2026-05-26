@@ -1,0 +1,25 @@
+[Unit]
+Description=Lazyagent dashboard (secure public frontend + local backend)
+After=network-online.target lazyagent-api.service
+Wants=network-online.target lazyagent-api.service
+
+[Service]
+Type=simple
+User=petur
+WorkingDirectory=/home/petur/coding/lazyagent-extension
+Environment=PATH=/home/petur/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/lazyagent-dashboard.env
+ExecStartPre=/usr/bin/env npm run build
+ExecStart=/usr/bin/env npm run start
+Restart=always
+RestartSec=10
+# Restart periodically so the dashboard process and proxied sessions stay fresh.
+RuntimeMaxSec=3h
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+# The dashboard launches pi in project directories, so it needs normal access to /home/petur.
+
+[Install]
+WantedBy=multi-user.target

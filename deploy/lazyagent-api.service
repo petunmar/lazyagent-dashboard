@@ -1,0 +1,23 @@
+[Unit]
+Description=Lazyagent API for pi sessions
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=petur
+WorkingDirectory=/home/petur
+Environment=PATH=/home/petur/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/lazyagent-api.env
+ExecStart=/usr/bin/env lazyagent --api --agent pi --host 127.0.0.1:7421
+Restart=always
+RestartSec=10
+# Lazyagent intentionally gets a clean process every 3 hours.
+RuntimeMaxSec=3h
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
