@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.js",
     "web": "vite --host 127.0.0.1",
     "backend": "node src/backend/server.js",
-    "build": "tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && vite build",
     "start": "node src/backend/server.js",
     "preview": "vite preview --host 127.0.0.1",
     "sessions": "node examples/list-sessions.js",
@@ -17,7 +17,12 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
     "typescript": "^5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vue-tsc": "^3.3.2"
+  },
+  "dependencies": {
+    "vue": "^3.5.34"
   }
 }
