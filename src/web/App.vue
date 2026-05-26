@@ -13,7 +13,14 @@ const summary = computed(() => summarizeSessions(state.sessions));
 const now = computed(() => new Date());
 const subtitle = computed(() => state.view === "detail" ? "session detail" : state.view === "pi-resources" ? "skills + extensions" : "multi-agent dashboard");
 const totalTokens = computed(() => state.selectedDetail ? state.selectedDetail.input_tokens + state.selectedDetail.output_tokens : 0);
-const totalCost = computed(() => state.sessions.reduce((sum, session) => sum + (session.cost_usd || 0), 0));
+const totalCost = computed(() => state.spend?.today_usd ?? 0);
+const maxDailySpend = computed(() => Math.max(...(state.spend?.daily.map(day => day.cost_usd) || [0]), 0.001));
+const spendBars = computed(() => (state.spend?.daily || []).map(day => ({
+  ...day,
+  label: new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+  height: `${Math.max(4, (day.cost_usd / maxDailySpend.value) * 100)}%`,
+})));
+const spendUpdated = computed(() => state.spend ? new Date(state.spend.generated_at).toLocaleTimeString() : "");
 
 onMounted(() => {
   window.addEventListener("popstate", monitor.handlePopstate);
@@ -38,7 +45,20 @@ onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate)
         <div><dt>{{ summary.idle }}</dt><dd>idle</dd></div>
         <div class="danger"><dt>{{ summary.errored }}</dt><dd>errored</dd></div>
         <div><dt>{{ formatCompact(totalTokens) }}</dt><dd>tokens</dd></div>
-        <div class="money"><dt>{{ formatMoney(totalCost) }}</dt><dd>today</dd></div>
+        <div class="money spend-stat" tabindex="0">
+          <dt>{{ formatMoney(totalCost) }}</dt><dd>today</dd>
+          <div class="spend-popover" role="tooltip">
+            <div class="spend-popover-head"><strong>real spend</strong><span>past 14 days</span></div>
+            <div class="spend-chart" aria-label="Spend over past 14 days">
+              <div v-for="day in spendBars" :key="day.date" class="spend-bar-wrap" :title="`${day.label}: ${formatMoney(day.cost_usd)}`">
+                <span class="spend-bar-value">{{ formatMoney(day.cost_usd) }}</span>
+                <span class="spend-bar" :style="{ height: day.height }"></span>
+                <span class="spend-bar-label">{{ day.label }}</span>
+              </div>
+            </div>
+            <p>summed from Pi transcript usage costs{{ spendUpdated ? ` · updated ${spendUpdated}` : '' }}</p>
+          </div>
+        </div>
       </dl>
       <button class="live-clock" type="button" aria-label="Open connection settings" @click="monitor.openModal('connect')">
         <strong><span></span>{{ state.connected ? 'LIVE' : 'SETUP' }}</strong>

@@ -113,6 +113,46 @@ code { color: var(--lime); overflow-wrap: anywhere; }
 .hero-stats .accent dt, .hero-stats .money dt { color: var(--lime); }
 .hero-stats .danger dt { color: var(--orange); }
 .hero-stats .money { border-left: 1px solid var(--line); padding-left: 30px; min-width: 132px; }
+.spend-stat { position: relative; outline: none; }
+.spend-stat dt { cursor: default; }
+.spend-popover {
+  position: absolute;
+  top: calc(100% + 16px);
+  left: 50%;
+  z-index: 20;
+  width: min(340px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 21, 15, .98);
+  box-shadow: 0 22px 50px var(--shadow);
+  opacity: 0;
+  transform: translate(-50%, -6px);
+  pointer-events: none;
+  transition: opacity .14s ease, transform .14s ease;
+}
+.spend-stat:hover .spend-popover, .spend-stat:focus-within .spend-popover { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.spend-popover::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  background: #08150f;
+  transform: translateX(-50%) rotate(45deg);
+}
+.spend-popover-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.spend-popover-head strong { color: var(--cream); font-size: 12px; text-transform: uppercase; letter-spacing: .14em; }
+.spend-popover-head span, .spend-popover p { color: var(--muted); font: 700 10px/1.35 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
+.spend-popover p { margin: 10px 0 0; text-align: left; text-transform: none; letter-spacing: 0; }
+.spend-chart { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); align-items: end; gap: 4px; height: 136px; }
+.spend-bar-wrap { min-width: 0; height: 100%; display: grid; grid-template-rows: 1fr 18px; align-items: end; gap: 5px; }
+.spend-bar-value { display: none; }
+.spend-bar { display: block; width: 100%; min-height: 4px; border-radius: 999px 999px 3px 3px; background: linear-gradient(180deg, var(--lime), var(--green)); box-shadow: 0 0 18px rgba(231, 255, 88, .12); }
+.spend-bar-label { color: var(--muted); font: 700 8px/1 "JetBrains Mono", monospace; transform: rotate(-45deg); transform-origin: top center; white-space: nowrap; justify-self: center; }
 
 .live-clock {
   display: grid;

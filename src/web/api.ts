@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, Stats, WidgetManifest, WidgetStatus } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, SpendSummary, Stats, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -93,6 +93,12 @@ export async function fetchAgentRuns(): Promise<AgentRun[]> {
 export async function fetchPiResources(cwd: string): Promise<PiResourcesPayload> {
   const res = await fetch(`${extensionApiBase()}/api/pi-resources?cwd=${encodeURIComponent(cwd)}`);
   if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchSpend(): Promise<SpendSummary> {
+  const res = await fetch(`${extensionApiBase()}/api/spend`);
+  if (!res.ok) throw new Error(`spend failed: ${res.status}`);
   return res.json();
 }
 

@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, fetchSpend, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -11,6 +11,7 @@ type State = {
   error: string;
   sessions: SessionItem[];
   stats: Stats | null;
+  spend: SpendSummary | null;
   selectedId: string;
   selectedDetail: SessionDetail | null;
   rawEvents: RawSessionEvents | null;
@@ -56,6 +57,7 @@ const state = reactive<State>({
   error: "",
   sessions: [],
   stats: null,
+  spend: null,
   selectedId: "",
   selectedDetail: null,
   rawEvents: null,
@@ -131,6 +133,7 @@ export function useAgentMonitor() {
       void loadRawEvents();
       void loadVisibleCardTools();
       void loadWidgetStatuses();
+      void loadSpend();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
     }
@@ -230,6 +233,10 @@ export function useAgentMonitor() {
 
   async function loadSessionNames(): Promise<void> {
     try { state.sessionNames = await fetchSessionNames(); } catch { /* optional sugar */ }
+  }
+
+  async function loadSpend(): Promise<void> {
+    try { state.spend = await fetchSpend(); } catch { /* optional dashboard sugar */ }
   }
 
   async function renameSelected(mode: "save" | "auto" | "clear", name = ""): Promise<void> {
@@ -363,6 +370,7 @@ export function useAgentMonitor() {
       void loadRawEvents();
       void loadVisibleCardTools();
       void loadWidgetStatuses();
+      void loadSpend();
     });
     events.addEventListener("error", () => { state.status = "reconnecting"; });
   }

@@ -38,13 +38,16 @@ const runs = new Map();
 const widgetsReady = loadWidgets();
 
 const server = createServer(async (req, res) => {
-  setCors(res);
+  const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
+  setSecurityHeaders(req, res);
   if (req.method === "OPTIONS") {
-    res.writeHead(204).end();
+    if (authEnabled && !sameOrigin(req)) {
+      writeJson(res, 403, { error: "cross-origin request blocked" });
+    } else {
+      res.writeHead(204).end();
+    }
     return;
   }
-
-  const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
 
   try {
     if (req.method === "GET" && url.pathname === "/api/dashboard-auth/status") {
@@ -118,6 +121,11 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/pi-resources") {
       const payload = await piResources(url.searchParams.get("cwd"));
       writeJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/spend") {
+      writeJson(res, 200, await spendSummary());
       return;
     }
 
@@ -573,6 +581,81 @@ async function findSessionFile(sessionId) {
   throw httpError(404, `session file not found for ${sessionId}`);
 }
 
+async function listSessionFiles() {
+  const files = [];
+  const projects = await readdir(piSessionsDir, { withFileTypes: true }).catch(() => []);
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const dir = path.join(piSessionsDir, project.name);
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(path.join(dir, entry.name));
+    }
+  }
+  return files;
+}
+
+async function spendSummary(days = 14) {
+  const keys = recentLocalDateKeys(days);
+  const byDate = Object.fromEntries(keys.map(date => [date, 0]));
+  const wanted = new Set(keys);
+  for (const file of await listSessionFiles()) {
+    const lines = (await readFile(file, "utf8").catch(() => "")).split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const cost = usageCost(entry?.message?.usage ?? entry?.usage);
+      if (!cost) continue;
+      const date = localDateKey(entry.timestamp || entry.message?.timestamp);
+      if (wanted.has(date)) byDate[date] += cost;
+    }
+  }
+  const daily = keys.map(date => ({ date, cost_usd: roundMoney(byDate[date]) }));
+  return {
+    generated_at: new Date().toISOString(),
+    days,
+    today: keys[keys.length - 1],
+    today_usd: daily[daily.length - 1]?.cost_usd || 0,
+    daily,
+  };
+}
+
+function usageCost(usage) {
+  if (!usage || typeof usage !== "object") return 0;
+  const cost = usage.cost;
+  const value = typeof cost === "number" ? cost : cost?.total ?? usage.cost_usd ?? usage.costUsd;
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function recentLocalDateKeys(days) {
+  const keys = [];
+  const cursor = new Date();
+  cursor.setHours(12, 0, 0, 0);
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(cursor);
+    day.setDate(cursor.getDate() - i);
+    keys.push(formatLocalDate(day));
+  }
+  return keys;
+}
+
+function localDateKey(value) {
+  const date = value ? new Date(value) : new Date();
+  return Number.isNaN(date.getTime()) ? formatLocalDate(new Date()) : formatLocalDate(date);
+}
+
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function roundMoney(value) {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 function parseJsonl(text, file) {
   const events = [];
   const lines = text.split(/\r?\n/).filter(Boolean);
@@ -968,10 +1051,14 @@ function clientKey(req) {
 
 function enforceSameOrigin(req) {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method || "")) return;
+  if (!sameOrigin(req)) throw httpError(403, "cross-origin write blocked");
+}
+
+function sameOrigin(req) {
   const origin = req.headers.origin;
-  if (!origin) return;
+  if (!origin) return true;
   const expected = `${requestIsHttps(req) ? "https" : "http"}://${req.headers.host}`;
-  if (origin !== expected) throw httpError(403, "cross-origin write blocked");
+  return origin === expected;
 }
 
 function parseBoolean(value, fallback) {
@@ -1026,10 +1113,20 @@ function writeJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-function setCors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function setSecurityHeaders(req, res) {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'");
+  res.setHeader("Cache-Control", "no-store");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (!authEnabled) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (sameOrigin(req) && req.headers.origin) {
+    res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
+    res.setHeader("Vary", "Origin");
+  }
 }
 
 function httpError(statusCode, message) {
