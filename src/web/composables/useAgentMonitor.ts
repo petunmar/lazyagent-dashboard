@@ -39,11 +39,13 @@ function initialView(): ViewMode {
   return location.pathname.startsWith("/pi-resources") ? "pi-resources" : "dashboard";
 }
 
+function isLocalHost(): boolean {
+  return location.hostname === "127.0.0.1" || location.hostname === "localhost";
+}
+
 function defaultLazyagentBaseUrl(): string {
-  const local = location.hostname === "127.0.0.1" || location.hostname === "localhost";
-  const stored = localStorage.getItem("lazyagent.baseUrl") || "";
-  if (!local && (!stored || stored.includes("127.0.0.1") || stored.includes("localhost"))) return "/lazyagent";
-  return stored || "http://127.0.0.1:7421";
+  if (!isLocalHost()) return "/lazyagent";
+  return localStorage.getItem("lazyagent.baseUrl") || "http://127.0.0.1:7421";
 }
 
 const state = reactive<State>({
@@ -329,6 +331,14 @@ export function useAgentMonitor() {
     state.selectedResourceKey = "";
   }
 
+  function useManagedProxy(): void {
+    if (isLocalHost()) return;
+    state.baseUrl = "/lazyagent";
+    state.passphrase = "";
+    localStorage.setItem("lazyagent.baseUrl", "/lazyagent");
+    localStorage.removeItem("lazyagent.passphrase");
+  }
+
   function handlePopstate(): void {
     state.view = initialView();
     if (state.view === "pi-resources") void loadPiResources();
@@ -394,5 +404,6 @@ export function useAgentMonitor() {
     loadPiResources,
     setResourceFilter,
     handlePopstate,
+    useManagedProxy,
   };
 }
