@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual, createHmac, pbkdf2Sync } from "node:crypto";
 import { spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -19,6 +19,8 @@ const widgetDirs = (process.env.WIDGETS_DIR || path.join(projectRoot, "widgets")
 const widgetStateDir = process.env.WIDGET_STATE_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "widgets");
 const agentAppendSystemPrompt = process.env.AGENT_APPEND_SYSTEM_PROMPT || "";
 const lazyagentUrl = (process.env.LAZYAGENT_URL || "http://127.0.0.1:7421").replace(/\/$/, "");
+const lazyagentPassphrase = process.env.LAZYAGENT_API_PASSPHRASE || "";
+let lazyagentBearerCache = null;
 const dashboardPasswordHash = process.env.DASHBOARD_PASSWORD_HASH || "";
 const dashboardAuthSecret = process.env.DASHBOARD_AUTH_SECRET || "";
 const authEnabled = Boolean(dashboardPasswordHash && dashboardAuthSecret);
@@ -832,6 +834,9 @@ async function proxyLazyagent(req, res, url) {
     if (["host", "connection", "cookie", "content-length"].includes(lower)) continue;
     headers.set(name, Array.isArray(value) ? value.join(", ") : value);
   }
+  if (!headers.has("Authorization") && targetPath !== "/api/auth" && lazyagentPassphrase) {
+    headers.set("Authorization", `Bearer ${await lazyagentBearerToken()}`);
+  }
 
   const init = { method: req.method, headers };
   if (!['GET', 'HEAD'].includes(req.method || 'GET')) {
@@ -857,6 +862,15 @@ async function readRawBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks);
+}
+
+async function lazyagentBearerToken() {
+  if (lazyagentBearerCache) return lazyagentBearerCache;
+  const authRes = await fetch(`${lazyagentUrl}/api/auth`);
+  if (!authRes.ok) throw httpError(502, "lazyagent auth unavailable");
+  const auth = await authRes.json();
+  lazyagentBearerCache = pbkdf2Sync(lazyagentPassphrase.trim(), auth.salt, auth.iterations, auth.key_length, "sha256").toString("base64url");
+  return lazyagentBearerCache;
 }
 
 async function loginDashboard(req, res) {

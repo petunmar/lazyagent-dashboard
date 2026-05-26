@@ -4,9 +4,11 @@ import { extensionApiBase } from "./utils";
 export class LazyagentBrowserClient {
   readonly baseUrl: string;
   private token = "";
+  private readonly managedProxy: boolean;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.managedProxy = this.baseUrl.startsWith("/");
   }
 
   async authInfo(): Promise<AuthInfo> {
@@ -16,15 +18,16 @@ export class LazyagentBrowserClient {
   }
 
   async setPassphrase(passphrase: string): Promise<string> {
+    if (this.managedProxy && !passphrase.trim()) return "managed-proxy";
     const auth = await this.authInfo();
     this.token = await deriveToken(passphrase, auth);
     return this.token;
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.token) throw new Error("Connect first");
+    if (!this.token && !this.managedProxy) throw new Error("Connect first");
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${this.token}`);
+    if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
     const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     if (!res.ok) throw new Error(`${init.method || "GET"} ${path} failed: ${res.status} ${res.statusText}`);
     return res.json();
@@ -35,6 +38,7 @@ export class LazyagentBrowserClient {
   stats(): Promise<Stats> { return this.request<Stats>("/api/stats"); }
 
   eventsUrl(): string {
+    if (this.managedProxy && !this.token) return `${this.baseUrl}/api/events`;
     if (!this.token) throw new Error("Connect first");
     return `${this.baseUrl}/api/events?token=${encodeURIComponent(this.token)}`;
   }

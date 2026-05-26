@@ -124,7 +124,7 @@ openssl rand -base64 48
 sudo chmod 600 /etc/lazyagent-dashboard.env /etc/lazyagent-api.env
 ```
 
-Paste the generated hash into `DASHBOARD_PASSWORD_HASH`, the random secret into `DASHBOARD_AUTH_SECRET`, and a separate lazyagent passphrase into `LAZYAGENT_API_PASSPHRASE`.
+Paste the generated hash into `DASHBOARD_PASSWORD_HASH`, the random secret into `DASHBOARD_AUTH_SECRET`, and a separate lazyagent passphrase into `LAZYAGENT_API_PASSPHRASE` in both env files. Keeping the same lazyagent passphrase in the dashboard env lets authenticated browsers auto-connect through `/lazyagent` without entering a second password.
 
 3. Install and enable the services:
 
@@ -139,7 +139,7 @@ Both services start on boot and use `RuntimeMaxSec=3h` with `Restart=always`, wh
 
 4. Put HTTPS in front of the dashboard only. Use `deploy/nginx-lazyagent-dashboard.conf.example` as the nginx site template, replace the domain and certificate paths, then reload nginx.
 
-5. Open the Hostinger link. The first visit from a new device shows the dashboard password screen. After login, connect the Lazyagent API with API URL `/lazyagent` and the passphrase from `/etc/lazyagent-api.env`.
+5. Open the Hostinger link. The first visit from a new device shows the dashboard password screen. After login, the app auto-connects to the managed `/lazyagent` proxy. If you manually open connection settings, use API URL `/lazyagent`; no lazyagent passphrase is needed when `LAZYAGENT_API_PASSPHRASE` is present in the dashboard env.
 
 ## Local backend API
 

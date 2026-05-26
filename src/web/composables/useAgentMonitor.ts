@@ -39,8 +39,15 @@ function initialView(): ViewMode {
   return location.pathname.startsWith("/pi-resources") ? "pi-resources" : "dashboard";
 }
 
+function defaultLazyagentBaseUrl(): string {
+  const local = location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  const stored = localStorage.getItem("lazyagent.baseUrl") || "";
+  if (!local && (!stored || stored.includes("127.0.0.1") || stored.includes("localhost"))) return "/lazyagent";
+  return stored || "http://127.0.0.1:7421";
+}
+
 const state = reactive<State>({
-  baseUrl: localStorage.getItem("lazyagent.baseUrl") || (location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "http://127.0.0.1:7421" : "/lazyagent"),
+  baseUrl: defaultLazyagentBaseUrl(),
   passphrase: localStorage.getItem("lazyagent.passphrase") || "",
   connected: false,
   status: "offline",
@@ -79,7 +86,8 @@ export function useAgentMonitor() {
   const visibleSessions = computed(() => state.sessions.filter(session => matchesFilter(state.filter, session)));
 
   async function connect(baseUrl = state.baseUrl, passphrase = state.passphrase): Promise<void> {
-    if (!baseUrl || !passphrase) {
+    const managedProxy = baseUrl.trim().startsWith("/");
+    if (!baseUrl || (!managedProxy && !passphrase)) {
       state.error = "Enter the lazyagent API URL and passphrase.";
       return;
     }
@@ -87,7 +95,8 @@ export function useAgentMonitor() {
     state.baseUrl = baseUrl;
     state.passphrase = passphrase;
     localStorage.setItem("lazyagent.baseUrl", baseUrl);
-    localStorage.setItem("lazyagent.passphrase", passphrase);
+    if (passphrase) localStorage.setItem("lazyagent.passphrase", passphrase);
+    else localStorage.removeItem("lazyagent.passphrase");
     client = new LazyagentBrowserClient(baseUrl);
     state.status = "connecting";
     state.error = "";
