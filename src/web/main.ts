@@ -2,7 +2,7 @@ import "./styles.css";
 import { LazyagentBrowserClient, type AgentRun, type ConversationItem, type EventsUpdate, type RawSessionEvents, type SessionDetail, type SessionEvent, type SessionItem, type Stats, type ToolItem } from "./lazyagent-browser-client";
 
 type SessionFilter = "all" | "working" | "idle" | "errored";
-type ViewMode = "dashboard" | "detail";
+type ViewMode = "dashboard" | "detail" | "pi-resources";
 type ModalType = "launch" | "message" | "connect" | "rename";
 type TranscriptMode = "recent" | "full";
 type ToolSparkItem = {
@@ -33,6 +33,27 @@ type DirectoryPickerState = {
   error: string;
 };
 
+type PiResourceKind = "all" | "skill" | "extension";
+
+type PiResource = {
+  key: string;
+  kind: "skill" | "extension";
+  scope: string;
+  name: string;
+  description: string;
+  path: string;
+  root: string;
+  content: string;
+};
+
+type PiResourcesPayload = {
+  cwd: string;
+  generated_at: string;
+  settings: { path: string; content: string }[];
+  packages: { name: string; root: string; missing?: boolean }[];
+  resources: PiResource[];
+};
+
 type State = {
   baseUrl: string;
   passphrase: string;
@@ -55,6 +76,11 @@ type State = {
   cwdDraft: string;
   transcriptMode: TranscriptMode;
   directoryPicker: DirectoryPickerState;
+  piResources: PiResourcesPayload | null;
+  piResourcesLoading: boolean;
+  piResourcesError: string;
+  piResourceFilter: PiResourceKind;
+  selectedResourceKey: string;
 };
 
 const state: State = {
@@ -70,7 +96,7 @@ const state: State = {
   rawEvents: null,
   runs: [],
   filter: "all",
-  view: "dashboard",
+  view: initialView(),
   modal: null,
   sessionNames: {},
   cardTools: {},
@@ -87,9 +113,18 @@ const state: State = {
     loading: false,
     error: "",
   },
+  piResources: null,
+  piResourcesLoading: false,
+  piResourcesError: "",
+  piResourceFilter: "all",
+  selectedResourceKey: "",
 };
 
 const lowFocusAfterMinutes = 10;
+
+function initialView(): ViewMode {
+  return location.pathname.startsWith("/pi-resources") ? "pi-resources" : "dashboard";
+}
 
 let client: LazyagentBrowserClient | null = null;
 let events: EventSource | null = null;
@@ -105,13 +140,13 @@ function render(): void {
   const now = new Date();
 
   app.innerHTML = `
-    <main class="monitor-shell ${state.view === "detail" ? "detail-view" : ""}">
+    <main class="monitor-shell ${state.view === "detail" ? "detail-view" : ""} ${state.view === "pi-resources" ? "resources-view" : ""}">
       <header class="monitor-topbar">
         <div class="brand-lockup">
           <button class="brand-mark" data-view="dashboard" type="button" aria-label="Back to dashboard">A</button>
           <div>
             <h1>Agent Monitor</h1>
-            <p>${state.view === "detail" ? "session detail" : "multi-agent dashboard"}</p>
+            <p>${viewSubtitle()}</p>
           </div>
         </div>
         <dl class="hero-stats">
@@ -130,7 +165,7 @@ function render(): void {
 
       ${state.error ? `<p class="error-banner">${escapeHtml(state.error)}</p>` : ""}
 
-      ${state.view === "detail" ? renderDetailPage(selected) : renderDashboard(visibleSessions)}
+      ${state.view === "detail" ? renderDetailPage(selected) : state.view === "pi-resources" ? renderPiResourcesPage() : renderDashboard(visibleSessions)}
       ${renderModal(selected)}
     </main>
   `;
@@ -140,6 +175,12 @@ function render(): void {
   restoreFocus(focus);
 }
 
+function viewSubtitle(): string {
+  if (state.view === "detail") return "session detail";
+  if (state.view === "pi-resources") return "skills + extensions";
+  return "multi-agent dashboard";
+}
+
 function renderDashboard(visibleSessions: SessionItem[]): string {
   const focusSessions = visibleSessions.filter(session => !isLowFocusSession(session));
   const lowFocusSessions = visibleSessions.filter(isLowFocusSession);
@@ -147,6 +188,7 @@ function renderDashboard(visibleSessions: SessionItem[]): string {
     <section class="dashboard-controls">
       <div class="filter-pills">
         ${(["all", "working", "idle", "errored"] as SessionFilter[]).map(filter => `<button class="pill ${state.filter === filter ? "active" : ""}" data-filter="${filter}" type="button">${filter}</button>`).join("")}
+        <button class="pill" type="button" data-view="pi-resources">skills + extensions</button>
         <button class="pill create" type="button" data-open-modal="launch">+ new agent</button>
       </div>
     </section>
@@ -164,7 +206,7 @@ function renderDetailPage(selected?: SessionItem): string {
   return `
     <section class="detail-actions">
       <button class="pill" type="button" data-view="dashboard">← dashboard</button>
-      <button class="pill create" type="button" data-open-modal="launch">+ new agent</button>
+      <div class="detail-action-group"><button class="pill" type="button" data-view="pi-resources">skills + extensions</button><button class="pill create" type="button" data-open-modal="launch">+ new agent</button></div>
     </section>
 
     <section class="detail-layout">
@@ -177,6 +219,95 @@ function renderDetailPage(selected?: SessionItem): string {
         ${rawTranscriptCard(selected)}
       </section>
     </section>
+  `;
+}
+
+function renderPiResourcesPage(): string {
+  const payload = state.piResources;
+  const resources = (payload?.resources || []).filter(resource => state.piResourceFilter === "all" || resource.kind === state.piResourceFilter);
+  const selected = resources.find(resource => resource.key === state.selectedResourceKey) || resources[0];
+  if (selected && state.selectedResourceKey !== selected.key) state.selectedResourceKey = selected.key;
+  const skills = payload?.resources.filter(resource => resource.kind === "skill").length || 0;
+  const extensions = payload?.resources.filter(resource => resource.kind === "extension").length || 0;
+  return `
+    <section class="detail-actions">
+      <button class="pill" type="button" data-view="dashboard">← dashboard</button>
+      <button class="pill" type="button" data-refresh-pi-resources>${state.piResourcesLoading ? "refreshing…" : "refresh"}</button>
+    </section>
+    <section class="resources-hero console-card">
+      <div>
+        <div class="console-head"><span>pi setup</span><h2>Skills + extensions</h2></div>
+        <p>Browse the Pi resources installed on this VM, including global skills, extension modules, and package-provided resources that the dashboard can find.</p>
+        ${payload ? `<code>${escapeHtml(payload.cwd)}</code>` : ""}
+      </div>
+      <dl class="resource-counts">
+        <div><dt>${skills}</dt><dd>skills</dd></div>
+        <div><dt>${extensions}</dt><dd>extensions</dd></div>
+        <div><dt>${payload?.packages.length || 0}</dt><dd>packages</dd></div>
+      </dl>
+    </section>
+    ${state.piResourcesError ? `<p class="error-banner">${escapeHtml(state.piResourcesError)}</p>` : ""}
+    ${state.piResourcesLoading && !payload ? `<section class="console-card"><p class="empty loading">Loading Pi resources…</p></section>` : renderPiResourcesBrowser(resources, selected, payload)}
+  `;
+}
+
+function renderPiResourcesBrowser(resources: PiResource[], selected: PiResource | undefined, payload: PiResourcesPayload | null): string {
+  if (!payload) return `<section class="console-card"><p class="empty">No Pi resources loaded yet.</p></section>`;
+  return `
+    <section class="resources-layout">
+      <aside class="console-card resources-list-card">
+        <div class="console-head"><span>inventory</span><h2>${resources.length} visible</h2></div>
+        <div class="filter-pills resource-filters">
+          ${(["all", "skill", "extension"] as PiResourceKind[]).map(filter => `<button class="pill ${state.piResourceFilter === filter ? "active" : ""}" data-resource-filter="${filter}" type="button">${filter}</button>`).join("")}
+        </div>
+        <div class="resource-list">
+          ${resources.length ? resources.map(resourceListItem).join("") : `<p class="empty">No resources in this filter.</p>`}
+        </div>
+        ${renderPiSettingsSummary(payload)}
+      </aside>
+      <section class="console-card resource-detail-card">
+        ${selected ? renderResourceDetail(selected) : `<p class="empty">Choose a skill or extension.</p>`}
+      </section>
+    </section>
+  `;
+}
+
+function resourceListItem(resource: PiResource): string {
+  return `
+    <button class="resource-row ${state.selectedResourceKey === resource.key ? "active" : ""}" type="button" data-resource-key="${escapeAttr(resource.key)}">
+      <span class="resource-kind ${resource.kind}">${resource.kind}</span>
+      <strong>${escapeHtml(resource.name)}</strong>
+      <small>${escapeHtml(resource.scope)}</small>
+    </button>
+  `;
+}
+
+function renderResourceDetail(resource: PiResource): string {
+  return `
+    <div class="resource-detail-head">
+      <div>
+        <span class="resource-kind ${resource.kind}">${resource.kind}</span>
+        <h2>${escapeHtml(resource.name)}</h2>
+        <p>${escapeHtml(resource.description || "No description found.")}</p>
+      </div>
+      <code>${escapeHtml(resource.scope)}</code>
+    </div>
+    <dl class="resource-meta">
+      <div><dt>path</dt><dd><code>${escapeHtml(resource.path)}</code></dd></div>
+      <div><dt>root</dt><dd><code>${escapeHtml(resource.root)}</code></dd></div>
+    </dl>
+    <pre class="resource-source"><code>${escapeHtml(resource.content)}</code></pre>
+  `;
+}
+
+function renderPiSettingsSummary(payload: PiResourcesPayload): string {
+  return `
+    <div class="settings-summary">
+      <h3>settings</h3>
+      ${payload.settings.length ? payload.settings.map(setting => `<code>${escapeHtml(setting.path)}</code>`).join("") : `<p class="empty">No settings files found.</p>`}
+      <h3>packages</h3>
+      ${payload.packages.length ? payload.packages.map(pkg => `<p><code>${escapeHtml(pkg.name)}</code>${pkg.missing ? " <span>missing</span>" : ` <small>${escapeHtml(pkg.root)}</small>`}</p>`).join("") : `<p class="empty">No package resources configured.</p>`}
+    </div>
   `;
 }
 
@@ -211,7 +342,7 @@ function renderModal(selected?: SessionItem): string {
             <button name="mode" value="${isMessage ? "message" : "start"}" type="submit">↵ ${isMessage ? "send" : "start"}</button>
           </div>
         </form>
-        ${state.runs.length ? `<div class="runs">${state.runs.slice(0, 3).map(runRow).join("")}</div>` : ""}
+        ${renderRunsList()}
       </section>
     </div>
   `;
@@ -322,7 +453,9 @@ function bindEvents(): void {
   app.querySelector<HTMLTextAreaElement>("#chat-prompt")?.addEventListener("keydown", event => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
-      (event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+      const form = (event.currentTarget as HTMLTextAreaElement).form;
+      const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"][value="message"]');
+      form?.requestSubmit(submitButton || undefined);
     }
   });
   app.querySelectorAll<HTMLElement>("[data-session-id]").forEach(element => {
@@ -354,11 +487,22 @@ function bindEvents(): void {
     });
   });
   app.querySelectorAll<HTMLButtonElement>("[data-view]").forEach(button => {
+    button.addEventListener("click", () => navigateTo((button.dataset.view as ViewMode) || "dashboard"));
+  });
+  app.querySelectorAll<HTMLButtonElement>("[data-resource-filter]").forEach(button => {
     button.addEventListener("click", () => {
-      state.view = (button.dataset.view as ViewMode) || "dashboard";
+      state.piResourceFilter = (button.dataset.resourceFilter as PiResourceKind) || "all";
+      state.selectedResourceKey = "";
       render();
     });
   });
+  app.querySelectorAll<HTMLButtonElement>("[data-resource-key]").forEach(button => {
+    button.addEventListener("click", () => {
+      state.selectedResourceKey = button.dataset.resourceKey || "";
+      render();
+    });
+  });
+  app.querySelector<HTMLButtonElement>("[data-refresh-pi-resources]")?.addEventListener("click", () => void loadPiResources(true));
   app.querySelectorAll<HTMLButtonElement>("[data-transcript-mode]").forEach(button => {
     button.addEventListener("click", () => {
       state.transcriptMode = (button.dataset.transcriptMode as TranscriptMode) || "recent";
@@ -369,6 +513,14 @@ function bindEvents(): void {
   });
 }
 
+function navigateTo(view: ViewMode): void {
+  state.view = view;
+  const target = view === "pi-resources" ? "/pi-resources" : "/";
+  if (location.pathname !== target) history.pushState({ view }, "", target);
+  render();
+  if (view === "pi-resources") void loadPiResources();
+}
+
 function selectSession(id: string): void {
   state.selectedId = id;
   state.selectedDetail = null;
@@ -376,6 +528,7 @@ function selectSession(id: string): void {
   state.chatDraft = "";
   state.transcriptMode = "recent";
   state.view = "detail";
+  if (location.pathname !== "/") history.pushState({ view: "detail" }, "", "/");
   state.modal = null;
   render();
   void loadSelectedDetail();
@@ -493,6 +646,25 @@ function lowFocusRow(s: SessionItem): string {
 function emptyAgentsCard(hasLowFocusSessions = false): string {
   const message = hasLowFocusSessions ? "No high-focus agents. Older idle sessions are listed below." : "Connect lazyagent or change the filter.";
   return `<article class="agent-card empty-card"><h3>No matching agents</h3><p>${escapeHtml(message)}</p></article>`;
+}
+
+function renderRunsList(): string {
+  return `<div class="runs" data-runs ${state.runs.length ? "" : "hidden"}>${renderRunRows()}</div>`;
+}
+
+function renderRunRows(): string {
+  return state.runs.slice(0, 3).map(runRow).join("");
+}
+
+function updateRunsList(): void {
+  const container = app.querySelector<HTMLElement>("[data-runs]");
+  if (!container) return;
+  container.hidden = state.runs.length === 0;
+  container.innerHTML = renderRunRows();
+}
+
+function runsFingerprint(runs: AgentRun[]): string {
+  return runs.map(run => [run.run_id, run.status, run.session_id || "", run.started_at, run.stderr_tail || ""].join("\u0001")).join("\u0002");
 }
 
 function runRow(run: AgentRun): string {
@@ -703,8 +875,8 @@ async function onRenameSubmit(event: SubmitEvent): Promise<void> {
 async function onAgentSubmit(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const submitter = event.submitter as HTMLButtonElement | null;
-  const mode = submitter?.value || "start";
   const form = event.currentTarget as HTMLFormElement;
+  const mode = submitter?.value || (form.id === "chat-form" ? "message" : "start");
   const data = new FormData(form);
   const cwd = String(data.get("cwd") || "").trim();
   const prompt = String(data.get("prompt") || "").trim();
@@ -808,9 +980,11 @@ async function refreshRuns(): Promise<void> {
   try {
     const res = await fetch(`${extensionApiBase()}/api/agent-runs`);
     if (!res.ok) throw new Error(`runs failed: ${res.status}`);
-    state.runs = ((await res.json()) as { runs: AgentRun[] }).runs;
-    render();
-    if (state.runs.some(run => run.status === "running")) window.setTimeout(() => void refreshRuns(), 2000);
+    const nextRuns = ((await res.json()) as { runs: AgentRun[] }).runs;
+    const changed = runsFingerprint(nextRuns) !== runsFingerprint(state.runs);
+    state.runs = nextRuns;
+    if (changed) updateRunsList();
+    if (nextRuns.some(run => run.status === "running")) window.setTimeout(() => void refreshRuns(), 2000);
   } catch {
     // Runs are best-effort; transcript/lazyagent views still work without them.
   }
@@ -875,6 +1049,25 @@ async function fetchSessionEvents(id: string, limit = state.transcriptMode === "
   const res = await fetch(`${extensionApiBase()}/api/session-events/${encodeURIComponent(id)}?limit=${limit}`);
   if (!res.ok) throw new Error(`raw transcript failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<RawSessionEvents>;
+}
+
+async function loadPiResources(force = false): Promise<void> {
+  if (state.piResourcesLoading || (state.piResources && !force)) return;
+  state.piResourcesLoading = true;
+  state.piResourcesError = "";
+  render();
+  try {
+    const cwd = selectedSession()?.cwd || "/home/petur";
+    const res = await fetch(`${extensionApiBase()}/api/pi-resources?cwd=${encodeURIComponent(cwd)}`);
+    if (!res.ok) throw new Error(await res.text());
+    state.piResources = await res.json() as PiResourcesPayload;
+    state.selectedResourceKey ||= state.piResources.resources[0]?.key || "";
+  } catch (error) {
+    state.piResourcesError = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.piResourcesLoading = false;
+    render();
+  }
 }
 
 function extractToolNames(raw: RawSessionEvents): ToolSparkItem[] {
@@ -1079,4 +1272,11 @@ function escapeAttr(value: string): string {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
 
+window.addEventListener("popstate", () => {
+  state.view = initialView();
+  render();
+  if (state.view === "pi-resources") void loadPiResources();
+});
+
 render();
+if (state.view === "pi-resources") void loadPiResources();

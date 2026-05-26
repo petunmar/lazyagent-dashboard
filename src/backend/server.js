@@ -50,6 +50,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/pi-resources") {
+      const payload = await piResources(url.searchParams.get("cwd"));
+      writeJson(res, 200, payload);
+      return;
+    }
+
     if ((req.method === "PATCH" || req.method === "POST") && url.pathname.startsWith("/api/session-names/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/session-names/".length));
       const body = await readJson(req);
@@ -264,6 +270,174 @@ async function listDirectories(requestedPath) {
     home: homedir(),
     entries: directories,
   };
+}
+
+async function piResources(requestedCwd) {
+  const cwd = path.resolve(String(requestedCwd || process.cwd()).replace(/^~(?=\/|$)/, homedir()));
+  const settingsFiles = [path.join(homedir(), ".pi", "agent", "settings.json"), path.join(cwd, ".pi", "settings.json")];
+  const settings = await Promise.all(settingsFiles.map(readSettingsFile));
+  const packageSpecs = settings.flatMap(item => Array.isArray(item.settings?.packages) ? item.settings.packages : []);
+  const packages = await packageRoots(packageSpecs);
+  const availablePackages = packages.filter(pkg => pkg.root && !pkg.missing);
+  const skillRoots = [
+    { scope: "global", root: path.join(homedir(), ".pi", "agent", "skills") },
+    { scope: "global", root: path.join(homedir(), ".agents", "skills") },
+    { scope: "project", root: path.join(cwd, ".pi", "skills") },
+    { scope: "project", root: path.join(cwd, ".agents", "skills") },
+    ...availablePackages.map(pkg => ({ scope: `package:${pkg.name}`, root: path.join(pkg.root, "skills") })),
+  ];
+  const extensionRoots = [
+    { scope: "global", root: path.join(homedir(), ".pi", "agent", "extensions") },
+    { scope: "project", root: path.join(cwd, ".pi", "extensions") },
+    ...availablePackages.map(pkg => ({ scope: `package:${pkg.name}`, root: path.join(pkg.root, "extensions") })),
+  ];
+
+  const [skills, extensions] = await Promise.all([
+    collectSkills(skillRoots),
+    collectExtensions(extensionRoots),
+  ]);
+
+  return {
+    cwd,
+    generated_at: new Date().toISOString(),
+    settings: settings.filter(item => item.exists),
+    packages,
+    resources: [...skills, ...extensions].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
+  };
+}
+
+async function readSettingsFile(file) {
+  try {
+    const content = await readFile(file, "utf8");
+    return { path: file, exists: true, settings: JSON.parse(content), content };
+  } catch (error) {
+    if (error.code === "ENOENT") return { path: file, exists: false, settings: null, content: "" };
+    return { path: file, exists: true, settings: null, content: `Unable to read settings: ${error.message}` };
+  }
+}
+
+async function packageRoots(specs) {
+  const roots = [];
+  for (const rawSpec of specs) {
+    const spec = String(rawSpec || "").trim();
+    if (!spec) continue;
+    if (spec.startsWith("file:")) {
+      const root = expandUserPath(spec.slice("file:".length));
+      if (await isDirectory(root)) roots.push({ name: spec, root });
+      continue;
+    }
+    if (spec.startsWith("npm:")) {
+      const name = spec.slice("npm:".length);
+      const root = await firstExistingDirectory(npmPackageCandidates(name));
+      roots.push({ name: spec, root: root || "", missing: !root });
+      continue;
+    }
+    if (spec.startsWith("github:") || spec.startsWith("git+")) {
+      roots.push({ name: spec, root: "", missing: true });
+    }
+  }
+  return roots;
+}
+
+function npmPackageCandidates(name) {
+  const candidates = [];
+  const nodeDir = path.dirname(process.execPath);
+  candidates.push(path.resolve(nodeDir, "..", "lib", "node_modules", name));
+  candidates.push(path.join(homedir(), ".nvm", "versions", "node", process.version, "lib", "node_modules", name));
+  candidates.push(path.join("/usr/local/lib/node_modules", name));
+  candidates.push(path.join("/opt/homebrew/lib/node_modules", name));
+  return candidates;
+}
+
+async function firstExistingDirectory(candidates) {
+  for (const candidate of candidates) {
+    if (await isDirectory(candidate)) return candidate;
+  }
+  return "";
+}
+
+async function isDirectory(dir) {
+  const info = await stat(dir).catch(() => null);
+  return Boolean(info?.isDirectory());
+}
+
+async function collectSkills(roots) {
+  const resources = [];
+  for (const { scope, root } of roots) {
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const base = path.join(root, entry.name);
+      const file = entry.isDirectory() ? path.join(base, "SKILL.md") : base;
+      if (!file.endsWith(".md")) continue;
+      const content = await readFile(file, "utf8").catch(() => "");
+      if (!content) continue;
+      const meta = parseFrontmatter(content);
+      resources.push({
+        key: `skill:${file}`,
+        kind: "skill",
+        scope,
+        name: meta.name || entry.name.replace(/\.md$/, ""),
+        description: meta.description || firstParagraph(content),
+        path: file,
+        root,
+        content,
+      });
+    }
+  }
+  return resources;
+}
+
+async function collectExtensions(roots) {
+  const resources = [];
+  for (const { scope, root } of roots) {
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const base = path.join(root, entry.name);
+      const file = entry.isDirectory() ? path.join(base, "index.ts") : base;
+      if (!/\.(ts|js|mjs|cjs)$/.test(file)) continue;
+      const content = await readFile(file, "utf8").catch(() => "");
+      if (!content) continue;
+      resources.push({
+        key: `extension:${file}`,
+        kind: "extension",
+        scope,
+        name: entry.isDirectory() ? entry.name : entry.name.replace(/\.(ts|js|mjs|cjs)$/, ""),
+        description: extensionSummary(content),
+        path: file,
+        root,
+        content,
+      });
+    }
+  }
+  return resources;
+}
+
+function parseFrontmatter(content) {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+  const meta = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const item = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (item) meta[item[1]] = item[2].replace(/^['"]|['"]$/g, "");
+  }
+  return meta;
+}
+
+function firstParagraph(content) {
+  return content
+    .replace(/^---\n[\s\S]*?\n---/, "")
+    .split(/\n\s*\n/)
+    .map(part => part.replace(/^#+\s*/gm, "").trim())
+    .find(Boolean) || "";
+}
+
+function extensionSummary(content) {
+  const description = content.match(/description\s*:\s*[`'"]([^`'"]+)/i);
+  if (description) return description[1].trim();
+  const comment = content.match(/\/\/\s*(.+)/);
+  if (comment) return comment[1].trim();
+  const exported = content.match(/export\s+default\s+[^({]*\(?\s*{?[\s\S]{0,400}?name\s*:\s*[`'"]([^`'"]+)/i);
+  return exported ? `Extension ${exported[1].trim()}` : "Pi extension module";
 }
 
 function tail(value, max = 12_000) {
