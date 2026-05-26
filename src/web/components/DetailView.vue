@@ -8,7 +8,12 @@ const props = defineProps<{ monitor: ReturnType<typeof useAgentMonitor> }>();
 const state = props.monitor.state;
 const selected = computed(() => props.monitor.selectedSession.value || state.sessions[0]);
 const name = computed(() => selected.value ? displaySessionName(selected.value, state.sessionNames) : "");
-const topWidgets = computed(() => state.widgets.filter(widget => widget.slots.includes("detail:top")));
+const topWidgets = computed(() => state.widgets.filter(widget => {
+  if (!widget.slots.includes("detail:top")) return false;
+  if (widget.id !== "question-queue") return true;
+  const status = state.widgetStatuses.find(item => item.id === widget.id);
+  return !!selected.value && !!status?.session_highlights?.includes(selected.value.session_id);
+}));
 const transcriptSummary = computed(() => {
   const raw = state.rawEvents;
   if (!raw) return "Loading raw transcript…";

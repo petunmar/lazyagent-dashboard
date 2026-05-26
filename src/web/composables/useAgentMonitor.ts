@@ -275,7 +275,7 @@ export function useAgentMonitor() {
   }
 
   function setWidgetFrameHeight(key: string, height: number): void {
-    state.widgetFrameHeights[key] = Math.max(120, Math.min(900, height));
+    state.widgetFrameHeights[key] = height <= 0 ? 0 : Math.max(120, Math.min(900, height));
   }
 
   async function refreshRuns(): Promise<void> {
