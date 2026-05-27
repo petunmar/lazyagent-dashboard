@@ -9,10 +9,13 @@ const state = props.monitor.state;
 const selected = computed(() => props.monitor.selectedSession.value || state.sessions[0]);
 const name = computed(() => selected.value ? displaySessionName(selected.value, state.sessionNames) : "");
 const topWidgets = computed(() => state.widgets.filter(widget => {
-  if (!widget.slots.includes("detail:top")) return false;
-  if (widget.id !== "question-queue") return true;
+  const slot = "detail:top";
+  if (!widget.slots.includes(slot)) return false;
+  const rule = widget.status_visibility?.[slot] || "always";
   const status = state.widgetStatuses.find(item => item.id === widget.id);
-  return !!selected.value && !!status?.session_highlights?.includes(selected.value.session_id);
+  if (rule === "has_pending") return (status?.pending || 0) > 0;
+  if (rule === "has_session_highlight") return !!selected.value && !!status?.session_highlights?.includes(selected.value.session_id);
+  return true;
 }));
 const sessionQueue = computed(() => selected.value ? state.messageQueue.filter(message => message.session_id === selected.value.session_id) : []);
 const gitTarget = computed(() => {

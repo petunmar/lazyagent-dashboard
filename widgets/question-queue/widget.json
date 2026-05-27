@@ -4,6 +4,10 @@
   "description": "Shows pending agent questions, supports voice-mode answers, and sends answers back to the originating session.",
   "version": "0.1.0",
   "slots": ["dashboard:top", "detail:top"],
+  "status_visibility": {
+    "dashboard:top": "has_pending",
+    "detail:top": "has_session_highlight"
+  },
   "entry": "index.html",
   "backend": "backend.js"
 }

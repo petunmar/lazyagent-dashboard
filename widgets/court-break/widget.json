@@ -1,0 +1,8 @@
+{
+  "id": "court-break",
+  "name": "Court Break",
+  "description": "A tiny 2D tennis rally for idle hands while agents work.",
+  "version": "0.1.0",
+  "slots": ["dashboard:top"],
+  "entry": "index.html"
+}

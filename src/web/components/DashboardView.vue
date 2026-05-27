@@ -12,9 +12,11 @@ const filters: SessionFilter[] = ["all", "working", "idle", "errored"];
 const focusSessions = computed(() => props.monitor.visibleSessions.value.filter(session => !isLowFocusSession(session)));
 const lowFocusSessions = computed(() => props.monitor.visibleSessions.value.filter(isLowFocusSession));
 const topWidgets = computed(() => state.widgets.filter(widget => {
-  if (!widget.slots.includes("dashboard:top")) return false;
-  if (widget.id !== "question-queue") return true;
-  return (state.widgetStatuses.find(status => status.id === widget.id)?.pending || 0) > 0;
+  const slot = "dashboard:top";
+  if (!widget.slots.includes(slot)) return false;
+  const rule = widget.status_visibility?.[slot] || "always";
+  if (rule === "has_pending") return (state.widgetStatuses.find(status => status.id === widget.id)?.pending || 0) > 0;
+  return true;
 }));
 </script>
 

@@ -78,7 +78,7 @@ async function syncedQuestions(context) {
   const storedQuestions = await readQuestions(context.stateDir);
   const questions = storedQuestions.filter(question => question.source !== "ask_user_question");
   const existing = new Set(questions.map(question => question.id));
-  const candidates = typeof context.listAgentQuestionCandidates === "function" ? await context.listAgentQuestionCandidates() : [];
+  const candidates = typeof context.listAgentSessionTranscripts === "function" ? await listQuestionCandidates(context) : [];
   let changed = false;
   for (const candidate of candidates) {
     const stored = questions.find(question => question.id === candidate.id);
@@ -111,6 +111,103 @@ async function syncedQuestions(context) {
   questions.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   if (changed || questions.length !== storedQuestions.length) await writeQuestions(context.stateDir, questions);
   return questions;
+}
+
+async function listQuestionCandidates(context) {
+  const candidates = [];
+  for (const transcript of await context.listAgentSessionTranscripts()) {
+    for (const event of transcript.events || []) {
+      if (event.kind !== "assistant" || !event.text) continue;
+      for (const question of extractQuestionSchemas(event.text)) {
+        candidates.push({
+          id: `schema:${transcript.session_id}:${event.line}:${stableHash(JSON.stringify(question))}`,
+          session_id: transcript.session_id,
+          cwd: transcript.cwd,
+          question: question.question,
+          details: question.details || "",
+          options: question.options,
+          created_at: event.timestamp || new Date().toISOString(),
+          chat_answer: findChatAnswerAfterQuestion(transcript.events, event.line, question),
+        });
+      }
+    }
+  }
+  candidates.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return candidates;
+}
+
+function extractQuestionSchemas(text) {
+  const schemas = [];
+  const fencePattern = /```(?:lazyagent-question|question-queue)\s*\n([\s\S]*?)```/gi;
+  for (const match of text.matchAll(fencePattern)) {
+    const parsed = parseQuestionSchema(match[1]);
+    if (parsed) schemas.push(parsed);
+  }
+  return schemas;
+}
+
+function findChatAnswerAfterQuestion(events, line, question) {
+  const createdAt = Date.parse(events.find(event => event.line === line)?.timestamp || "");
+  const cutoff = Number.isFinite(createdAt) ? createdAt + 6 * 60 * 60 * 1000 : Infinity;
+  for (const event of events) {
+    if (event.kind !== "user" || !event.text || (event.line || 0) <= line) continue;
+    const timestamp = Date.parse(event.timestamp || "");
+    if (Number.isFinite(timestamp) && timestamp > cutoff) continue;
+    if (looksLikeQuestionAnswer(event.text, question)) return { text: event.text, answered_at: event.timestamp || new Date().toISOString() };
+  }
+  return null;
+}
+
+function looksLikeQuestionAnswer(text, question) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return false;
+  const questionWords = significantWords(question.question).slice(0, 8);
+  if (questionWords.length >= 5 && questionWords.every(word => normalized.includes(word))) return true;
+  for (const option of question.options || []) {
+    const value = normalizeSearchText(option.value || "");
+    if (value.length >= 4 && normalized.includes(value)) return true;
+    const words = significantWords(option.label || option.value || "").slice(0, 4);
+    if (words.length >= 3 && words.every(word => normalized.includes(word))) return true;
+  }
+  return false;
+}
+
+function significantWords(value) {
+  return normalizeSearchText(value)
+    .split(/\s+/)
+    .filter(word => word.length >= 4 && !new Set(["should", "only", "with", "this", "that", "from", "into", "including", "recommended"]).has(word));
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9áéíóúýþæöð]+/gi, " ").trim();
+}
+
+function parseQuestionSchema(raw) {
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (parsed?.widget !== "question-queue" && parsed?.lazyagent_widget !== "question-queue") return null;
+    const question = String(parsed.question || "").trim();
+    const options = Array.isArray(parsed.options) ? parsed.options.map(normalizeQuestionOption).filter(Boolean) : [];
+    if (!question || !options.length) return null;
+    return { question, details: String(parsed.details || "").trim(), options };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeQuestionOption(option) {
+  if (typeof option === "string") return { label: option, value: option };
+  if (!option || typeof option !== "object") return null;
+  const label = String(option.label || option.value || "").trim();
+  const value = String(option.value || option.label || "").trim();
+  if (!label || !value) return null;
+  return { label, value, description: typeof option.description === "string" ? option.description : "" };
+}
+
+function stableHash(value) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index++) hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  return (hash >>> 0).toString(36);
 }
 
 async function createQuestion(stateDir, body, httpError) {

@@ -153,6 +153,8 @@ export type AgentRun = {
   stderr_tail: string;
 };
 
+export type WidgetVisibilityRule = "always" | "has_pending" | "has_session_highlight";
+
 export type WidgetManifest = {
   id: string;
   name: string;
@@ -160,6 +162,7 @@ export type WidgetManifest = {
   version: string;
   slots: WidgetSlot[];
   entry: string;
+  status_visibility?: Partial<Record<WidgetSlot, WidgetVisibilityRule>>;
 };
 
 export type WidgetStatus = {

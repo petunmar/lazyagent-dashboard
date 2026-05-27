@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css" />
+  <title>Court Break</title>
+</head>
+<body>
+  <section class="court-shell" aria-label="Court Break tennis widget">
+    <div class="hud">
+      <div>
+        <p class="eyebrow">waiting room arcade</p>
+        <h1>Court Break</h1>
+      </div>
+      <div class="scoreboard" aria-live="polite">
+        <span>You <strong id="player-score">0</strong></span>
+        <span>Bot <strong id="bot-score">0</strong></span>
+        <span class="rally">Rally <strong id="rally-count">0</strong></span>
+      </div>
+    </div>
+
+    <div class="court-wrap">
+      <canvas id="court" width="960" height="420"></canvas>
+      <div id="curtain" class="curtain">
+        <strong>Press Space or click to serve</strong>
+        <span>Move with W/S, ↑/↓, mouse, or touch. Hit clean for bendy shots.</span>
+      </div>
+    </div>
+
+    <footer>
+      <button id="serve" type="button">serve</button>
+      <button id="mode" type="button" class="ghost">zen court</button>
+      <p id="commentary">The crowd is just your CPU fan.</p>
+    </footer>
+  </section>
+  <script type="module" src="./tennis.js"></script>
+</body>
+</html>
