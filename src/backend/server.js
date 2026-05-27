@@ -964,6 +964,7 @@ async function listAgentQuestionCandidates() {
             details: question.details || "",
             options: question.options,
             created_at: event.timestamp || new Date().toISOString(),
+            chat_answer: findChatAnswerAfterQuestion(parsed.events, event.line, question),
           });
         }
       }
@@ -981,6 +982,42 @@ function extractQuestionSchemas(text) {
     if (parsed) schemas.push(parsed);
   }
   return schemas;
+}
+
+function findChatAnswerAfterQuestion(events, line, question) {
+  const createdAt = Date.parse(events.find(event => event.line === line)?.timestamp || "");
+  const cutoff = Number.isFinite(createdAt) ? createdAt + 6 * 60 * 60 * 1000 : Infinity;
+  for (const event of events) {
+    if (event.kind !== "user" || !event.text || (event.line || 0) <= line) continue;
+    const timestamp = Date.parse(event.timestamp || "");
+    if (Number.isFinite(timestamp) && timestamp > cutoff) continue;
+    if (looksLikeQuestionAnswer(event.text, question)) return { text: event.text, answered_at: event.timestamp || new Date().toISOString() };
+  }
+  return null;
+}
+
+function looksLikeQuestionAnswer(text, question) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return false;
+  const questionWords = significantWords(question.question).slice(0, 8);
+  if (questionWords.length >= 5 && questionWords.every(word => normalized.includes(word))) return true;
+  for (const option of question.options || []) {
+    const value = normalizeSearchText(option.value || "");
+    if (value.length >= 4 && normalized.includes(value)) return true;
+    const words = significantWords(option.label || option.value || "").slice(0, 4);
+    if (words.length >= 3 && words.every(word => normalized.includes(word))) return true;
+  }
+  return false;
+}
+
+function significantWords(value) {
+  return normalizeSearchText(value)
+    .split(/\s+/)
+    .filter(word => word.length >= 4 && !new Set(["should", "only", "with", "this", "that", "from", "into", "including", "recommended"]).has(word));
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9áéíóúýþæöð]+/gi, " ").trim();
 }
 
 function parseQuestionSchema(raw) {

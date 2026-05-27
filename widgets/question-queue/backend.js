@@ -53,7 +53,17 @@ async function syncedQuestions(context) {
   const candidates = typeof context.listAgentQuestionCandidates === "function" ? await context.listAgentQuestionCandidates() : [];
   let changed = false;
   for (const candidate of candidates) {
-    if (existing.has(candidate.id)) continue;
+    const stored = questions.find(question => question.id === candidate.id);
+    if (stored) {
+      if (stored.status === "pending" && !stored.answer && candidate.chat_answer?.text) {
+        stored.status = "answered";
+        stored.answer = candidate.chat_answer.text;
+        stored.answered_at = candidate.chat_answer.answered_at || new Date().toISOString();
+        stored.source = "question_schema_chat_answer";
+        changed = true;
+      }
+      continue;
+    }
     questions.unshift({
       id: candidate.id,
       session_id: candidate.session_id,
@@ -61,11 +71,11 @@ async function syncedQuestions(context) {
       question: candidate.question,
       details: candidate.details || "",
       options: candidate.options || [],
-      status: "pending",
-      answer: "",
+      status: candidate.chat_answer?.text ? "answered" : "pending",
+      answer: candidate.chat_answer?.text || "",
       created_at: candidate.created_at,
-      answered_at: "",
-      source: "question_schema",
+      answered_at: candidate.chat_answer?.answered_at || "",
+      source: candidate.chat_answer?.text ? "question_schema_chat_answer" : "question_schema",
     });
     existing.add(candidate.id);
     changed = true;

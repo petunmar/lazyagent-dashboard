@@ -11,7 +11,7 @@ const src = computed(() => {
   if (props.sessionId) params.set("session_id", props.sessionId);
   return `${extensionApiBase()}/widgets/${props.widget.id}/${props.widget.entry}?${params}`;
 });
-const height = computed(() => props.monitor.state.widgetFrameHeights[key.value] ?? 0);
+const height = computed(() => props.monitor.state.widgetFrameHeights[key.value] ?? 260);
 
 function onMessage(event: MessageEvent): void {
   if (event.data?.type === "lazyagent-widget-height" && event.data.widget === props.widget.id && event.data.slot === props.slotName) {
