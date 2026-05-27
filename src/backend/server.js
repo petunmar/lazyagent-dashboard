@@ -1255,10 +1255,22 @@ function writeJson(res, status, body) {
 }
 
 function setSecurityHeaders(req, res) {
-  res.setHeader("X-Frame-Options", "DENY");
+  const requestPath = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`).pathname;
+  const widgetFrame = requestPath.startsWith("/widgets/");
+  res.setHeader("X-Frame-Options", widgetFrame ? "SAMEORIGIN" : "DENY");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'");
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "connect-src 'self'",
+    "frame-src 'self'",
+    "img-src 'self' data:",
+    "base-uri 'none'",
+    `frame-ancestors ${widgetFrame ? "'self'" : "'none'"}`,
+  ].join("; "));
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
