@@ -14,6 +14,7 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
   const status = state.widgetStatuses.find(item => item.id === widget.id);
   return !!selected.value && !!status?.session_highlights?.includes(selected.value.session_id);
 }));
+const sessionQueue = computed(() => selected.value ? state.messageQueue.filter(message => message.session_id === selected.value.session_id) : []);
 const transcriptSummary = computed(() => {
   const raw = state.rawEvents;
   if (!raw) return "Loading raw transcript…";
@@ -22,6 +23,10 @@ const transcriptSummary = computed(() => {
 async function submitChat() {
   if (!selected.value) return;
   await props.monitor.sendAgent({ mode: "message", cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft });
+}
+function queueChat() {
+  if (!selected.value) return;
+  props.monitor.queueAgentMessage({ cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft });
 }
 </script>
 
@@ -53,7 +58,15 @@ async function submitChat() {
         </div>
         <form class="chat-compose" aria-label="Send a follow-up message to this agent" @submit.prevent="submitChat">
           <textarea id="chat-prompt" v-model="state.chatDraft" rows="3" :placeholder="`Message ${name}…`" @keydown.meta.enter.prevent="submitChat" @keydown.ctrl.enter.prevent="submitChat"></textarea>
-          <div class="chat-compose-actions"><span>{{ shortId(selected.session_id) }} · ⌘/ctrl+enter sends</span><button name="mode" value="message" type="submit">send ↵</button></div>
+          <div class="chat-compose-actions"><span>{{ shortId(selected.session_id) }} · ⌘/ctrl+enter sends now</span><div class="chat-buttons"><button class="secondary" type="button" @click="queueChat">queue</button><button name="mode" value="message" type="submit">send now ↵</button></div></div>
+          <section v-if="sessionQueue.length" class="message-queue" aria-label="Queued messages">
+            <header><strong>queued messages</strong><span>auto-sends after the agent's next assistant message has been idle for 10s</span></header>
+            <article v-for="message in sessionQueue" :key="message.id" class="queued-message" :class="message.status">
+              <p>{{ message.prompt }}</p>
+              <div><span>{{ message.status }} · {{ relativeTime(message.created_at) }}</span><button type="button" @click="monitor.sendQueuedNow(message.id)">send now</button><button class="ghost" type="button" @click="monitor.removeQueuedMessage(message.id)">remove</button></div>
+              <small v-if="message.error">{{ message.error }}</small>
+            </article>
+          </section>
         </form>
       </section>
       </section>

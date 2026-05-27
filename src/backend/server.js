@@ -281,6 +281,7 @@ async function attachNewestSession(run, startedAt) {
     const newest = await newestSession(run.session_dir, startedAt).catch(() => null);
     if (newest) {
       run.session_id = newest.id;
+      if (run.kind === "start") await assignDefaultSessionName(newest.id);
       return;
     }
     await sleep(300);
@@ -314,6 +315,14 @@ async function assertDirectory(dir) {
 
 function expandUserPath(value) {
   return path.resolve(value.replace(/^~(?=\/|$)/, homedir()));
+}
+
+async function assignDefaultSessionName(sessionId) {
+  if (!/^[A-Za-z0-9_.:T-]+$/.test(sessionId)) return;
+  const names = await readSessionNames();
+  if (names[sessionId]) return;
+  names[sessionId] = randomTennisPlayer(names);
+  await writeSessionNames(names);
 }
 
 async function renameSession(sessionId, body) {

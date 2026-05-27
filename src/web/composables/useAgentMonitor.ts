@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
 import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, fetchSpend, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -34,6 +34,7 @@ type State = {
   widgets: WidgetManifest[];
   widgetStatuses: WidgetStatus[];
   widgetFrameHeights: Record<string, number>;
+  messageQueue: QueuedMessage[];
 };
 
 function initialView(): ViewMode {
@@ -80,10 +81,28 @@ const state = reactive<State>({
   widgets: [],
   widgetStatuses: [],
   widgetFrameHeights: {},
+  messageQueue: loadMessageQueue(),
 });
 
 let client: LazyagentBrowserClient | null = null;
 let events: EventSource | null = null;
+let queueTimer: number | null = null;
+const queuedSessionReadiness = new Map<string, { key: string; since: number }>();
+const queueIdleMs = 10_000;
+
+function loadMessageQueue(): QueuedMessage[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("agentMonitor.messageQueue") || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(item => item && typeof item.session_id === "string" && typeof item.cwd === "string" && typeof item.prompt === "string")
+      .map(item => ({ ...item, status: item.status === "error" ? "error" : "waiting" }));
+  } catch { return []; }
+}
+
+function saveMessageQueue(): void {
+  localStorage.setItem("agentMonitor.messageQueue", JSON.stringify(state.messageQueue));
+}
 
 export function useAgentMonitor() {
   const selectedSession = computed(() => state.sessions.find(session => session.session_id === state.selectedId));
@@ -198,6 +217,7 @@ export function useAgentMonitor() {
         state.error = "";
         await nextTick();
         pinTranscriptIfRecent();
+        scheduleQueueCheck();
       }
     } catch (error) {
       if (state.selectedId === id) {
@@ -272,9 +292,99 @@ export function useAgentMonitor() {
       state.modal = null;
       state.chatDraft = "";
       window.setTimeout(() => void refreshRuns(), 1000);
+      scheduleQueueCheck();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  function queueAgentMessage(form: { cwd: string; prompt: string; sessionId?: string }): boolean {
+    const cwd = form.cwd.trim();
+    const prompt = form.prompt.trim();
+    const sessionId = (form.sessionId || "").trim();
+    if (!cwd || !prompt) {
+      state.error = "Working directory and message are required.";
+      return false;
+    }
+    if (!sessionId) {
+      state.error = "Choose or enter a session ID to queue a message.";
+      return false;
+    }
+    state.messageQueue.push({ id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, session_id: sessionId, cwd, prompt, created_at: new Date().toISOString(), status: "waiting" });
+    saveMessageQueue();
+    state.error = "";
+    state.chatDraft = "";
+    scheduleQueueCheck();
+    return true;
+  }
+
+  async function sendQueuedNow(id: string): Promise<void> {
+    const item = state.messageQueue.find(message => message.id === id);
+    if (!item) return;
+    await dispatchQueuedMessage(item);
+  }
+
+  function removeQueuedMessage(id: string): void {
+    const index = state.messageQueue.findIndex(message => message.id === id);
+    if (index >= 0) {
+      state.messageQueue.splice(index, 1);
+      saveMessageQueue();
+    }
+  }
+
+  async function dispatchQueuedMessage(item: QueuedMessage): Promise<void> {
+    if (item.status === "sending") return;
+    item.status = "sending";
+    item.error = "";
+    saveMessageQueue();
+    try {
+      const run = await submitAgent("message", { cwd: item.cwd, prompt: item.prompt, session_id: item.session_id });
+      state.runs = [run, ...state.runs.filter(r => r.run_id !== run.run_id)];
+      queuedSessionReadiness.delete(item.session_id);
+      removeQueuedMessage(item.id);
+      state.error = "";
+      window.setTimeout(() => void refreshRuns(), 1000);
+    } catch (error) {
+      item.status = "error";
+      item.error = error instanceof Error ? error.message : String(error);
+      saveMessageQueue();
+    }
+  }
+
+  function scheduleQueueCheck(delay = 1000): void {
+    if (queueTimer !== null) window.clearTimeout(queueTimer);
+    if (!state.messageQueue.some(message => message.status === "waiting" || message.status === "error")) return;
+    queueTimer = window.setTimeout(() => void processMessageQueue(), delay);
+  }
+
+  async function processMessageQueue(): Promise<void> {
+    queueTimer = null;
+    const waiting = state.messageQueue.filter(message => message.status === "waiting" || message.status === "error");
+    const checkedSessions = new Set<string>();
+    for (const item of waiting) {
+      if (checkedSessions.has(item.session_id)) continue;
+      checkedSessions.add(item.session_id);
+      const ready = await queuedSessionIsReady(item.session_id).catch(() => false);
+      if (ready) await dispatchQueuedMessage(item);
+    }
+    if (state.messageQueue.some(message => message.status === "waiting" || message.status === "error")) scheduleQueueCheck(2000);
+  }
+
+  async function queuedSessionIsReady(sessionId: string): Promise<boolean> {
+    const raw = state.selectedId === sessionId && state.rawEvents ? state.rawEvents : await fetchSessionEvents(sessionId, 20);
+    const last = raw.events.at(-1);
+    if (!last || last.kind !== "assistant") {
+      queuedSessionReadiness.delete(sessionId);
+      return false;
+    }
+    const key = `${last.line ?? ""}:${last.timestamp ?? ""}:${(last.text || "").length}:${raw.event_count}`;
+    const now = Date.now();
+    const readiness = queuedSessionReadiness.get(sessionId);
+    if (!readiness || readiness.key !== key) {
+      queuedSessionReadiness.set(sessionId, { key, since: now });
+      return false;
+    }
+    return now - readiness.since >= queueIdleMs;
   }
 
   async function loadWidgets(): Promise<void> {
@@ -371,6 +481,7 @@ export function useAgentMonitor() {
       void loadVisibleCardTools();
       void loadWidgetStatuses();
       void loadSpend();
+      scheduleQueueCheck();
     });
     events.addEventListener("error", () => { state.status = "reconnecting"; });
   }
@@ -402,6 +513,9 @@ export function useAgentMonitor() {
     loadVisibleCardTools,
     renameSelected,
     sendAgent,
+    queueAgentMessage,
+    sendQueuedNow,
+    removeQueuedMessage,
     loadWidgets,
     loadWidgetStatuses,
     sessionHasWidgetAlert,

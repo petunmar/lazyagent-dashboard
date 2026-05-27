@@ -103,6 +103,16 @@ export type RawSessionEvents = {
   truncated: boolean;
 };
 
+export type QueuedMessage = {
+  id: string;
+  session_id: string;
+  cwd: string;
+  prompt: string;
+  created_at: string;
+  status: "waiting" | "sending" | "sent" | "error";
+  error?: string;
+};
+
 export type AgentRun = {
   run_id: string;
   kind: "start" | "message";
