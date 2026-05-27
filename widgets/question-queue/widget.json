@@ -1,7 +1,7 @@
 {
   "id": "question-queue",
   "name": "Question Queue",
-  "description": "Shows pending agent questions and sends answers back to the originating session.",
+  "description": "Shows pending agent questions, supports voice-mode answers, and sends answers back to the originating session.",
   "version": "0.1.0",
   "slots": ["dashboard:top", "detail:top"],
   "entry": "index.html",

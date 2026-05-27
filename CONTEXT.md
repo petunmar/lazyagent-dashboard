@@ -15,5 +15,6 @@
 - **Widget** — an independently packaged add-on that augments Agent Monitor without being part of the dashboard source code. Avoid: Dashboard Extension, Plugin.
 - **Widget Slot** — a named place in Agent Monitor where a Widget can appear.
 - **Question Queue** — a Widget that gathers questions from Agents, keeps unanswered questions visible, and records user answers.
+- **Voice Mode** — a continuous Question Queue interaction mode where Agent questions are spoken aloud, user answers can be captured by speech, and the queue advances through Pending Questions until none remain or the user exits.
 - **Pending Question** — an unanswered question from one Agent to the user; it belongs to exactly one Agent until answered.
 - **Question Schema** — the explicit transcript format an Agent writes to create a Pending Question for the Question Queue. The schema must include options; generic tool calls are not questions for the dashboard.

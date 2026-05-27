@@ -1492,6 +1492,7 @@ function setSecurityHeaders(req, res) {
     "connect-src 'self'",
     "frame-src 'self'",
     "img-src 'self' data:",
+    "media-src 'self' blob:",
     "base-uri 'none'",
     `frame-ancestors ${widgetFrame ? "'self'" : "'none'"}`,
   ].join("; "));

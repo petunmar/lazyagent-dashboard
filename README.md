@@ -99,6 +99,11 @@ The backend uses environment variables for local paths and limits:
 | `DASHBOARD_AUTH_SECRET` | empty | Random HMAC secret for signed device cookies; generate with `openssl rand -base64 48` |
 | `DASHBOARD_AUTH_SECURE_COOKIES` | `true` | Adds `Secure` to auth cookies when requests arrive over HTTPS |
 | `DASHBOARD_AUTH_SESSION_DAYS` | `30` | How long a device stays logged in before it must enter the password again |
+| `ELEVENLABS_API_KEY` | empty | Enables Question Queue Voice Mode TTS/STT; kept server-side |
+| `ELEVENLABS_VOICE_NAME` | `Bradford` | Voice name to resolve through ElevenLabs when `ELEVENLABS_VOICE_ID` is not set |
+| `ELEVENLABS_VOICE_ID` | empty | Optional explicit ElevenLabs voice ID override |
+| `ELEVENLABS_TTS_MODEL` | `eleven_flash_v2_5` | Text-to-speech model for spoken Pending Questions |
+| `ELEVENLABS_STT_MODEL` | `scribe_v1` | Speech-to-text model for recorded answers |
 | `MAX_SESSION_EVENTS` | `250` | Default max transcript events returned |
 | `MAX_TOOL_RESULT_CHARS` | `12000` | Tool result truncation limit |
 | `MAX_THINKING_CHARS` | `2000` | Thinking block truncation limit |

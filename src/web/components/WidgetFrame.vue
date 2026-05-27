@@ -25,5 +25,5 @@ onUnmounted(() => window.removeEventListener("message", onMessage));
 </script>
 
 <template>
-  <iframe class="widget-frame" :src="src" :title="widget.name" :style="{ height: `${height}px` }"></iframe>
+  <iframe class="widget-frame" :src="src" :title="widget.name" :style="{ height: `${height}px` }" allow="microphone; autoplay"></iframe>
 </template>
