@@ -7,6 +7,7 @@ const curtain = document.querySelector("#curtain");
 const commentaryEl = document.querySelector("#commentary");
 const serveButton = document.querySelector("#serve");
 const modeButton = document.querySelector("#mode");
+const restReminder = document.querySelector("#rest-reminder");
 
 const W = canvas.width;
 const H = canvas.height;
@@ -29,6 +30,10 @@ let botScore = 0;
 let rally = 0;
 let shake = 0;
 let cometHue = 80;
+let agentActive = true;
+let agentLastActivity = Date.now();
+let restTimer = 0;
+let resting = false;
 
 const player = { x: 52, y: H / 2 - 42, w: 14, h: 84, targetX: 52, targetY: H / 2, speed: 520, footwork: 430, lastX: 52, lastY: H / 2 - 42, vx: 0, vy: 0 };
 const bot = { x: W - 66, y: H / 2 - 42, w: 14, h: 84, targetX: W - 66, targetY: H / 2, speed: 390, footwork: 360, nerve: 0.78, lastX: W - 66, lastY: H / 2 - 42, vx: 0, vy: 0 };
@@ -59,7 +64,7 @@ function resetBall(direction = 1) {
 }
 
 function serve() {
-  if (!waiting) return;
+  if (resting || !waiting) return;
   waiting = false;
   curtain.classList.remove("show");
   const direction = Math.random() > 0.5 ? 1 : -1;
@@ -129,6 +134,8 @@ function score(winner) {
 }
 
 function update(dt) {
+  updateRestState(dt);
+  if (resting) return;
   if (keys.has("arrowup") || keys.has("w")) player.targetY -= player.speed * dt * 1.6;
   if (keys.has("arrowdown") || keys.has("s")) player.targetY += player.speed * dt * 1.6;
   if (keys.has("arrowleft") || keys.has("a")) player.targetX -= player.footwork * dt * 1.7;
@@ -275,6 +282,23 @@ function roundRect(x, y, w, h, r) {
   ctx.fill();
 }
 
+function updateRestState(dt) {
+  const inactiveFor = agentActive ? 0 : Math.max(0, Date.now() - agentLastActivity);
+  restTimer = inactiveFor >= 10_000 ? restTimer + dt : 0;
+  const shouldRest = restTimer > 0;
+  if (shouldRest === resting) return;
+  resting = shouldRest;
+  document.body.classList.toggle("agent-resting", resting);
+  if (resting) {
+    keys.clear();
+    commentaryEl.textContent = "Agent quiet. Rally fading so you can return to the real match.";
+    restReminder?.setAttribute("aria-hidden", "false");
+  } else {
+    restReminder?.setAttribute("aria-hidden", "true");
+    commentaryEl.textContent = quips[Math.floor(Math.random() * quips.length)];
+  }
+}
+
 function loop(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
@@ -295,6 +319,22 @@ function isControlKey(key) {
   return key === " " || key === "arrowup" || key === "arrowdown" || key === "arrowleft" || key === "arrowright" || key === "w" || key === "a" || key === "s" || key === "d";
 }
 
+function onSessionState(message) {
+  if (message.session_id && new URLSearchParams(location.search).get("session_id") !== message.session_id) return;
+  agentActive = Boolean(message.is_active);
+  const parsedLastActivity = Date.parse(message.last_activity || "");
+  agentLastActivity = Number.isFinite(parsedLastActivity) ? parsedLastActivity : Date.now();
+  if (agentActive) {
+    restTimer = 0;
+    if (resting) {
+      resting = false;
+      document.body.classList.remove("agent-resting");
+      restReminder?.setAttribute("aria-hidden", "true");
+      commentaryEl.textContent = "Agent is moving again. Ball is live.";
+    }
+  }
+}
+
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
   if (isControlKey(key)) event.preventDefault();
@@ -306,6 +346,9 @@ window.addEventListener("keyup", event => {
   if (isControlKey(key)) event.preventDefault();
   keys.delete(key);
 }, { passive: false });
+window.addEventListener("message", event => {
+  if (event.data?.type === "lazyagent-widget-session-state") onSessionState(event.data);
+});
 canvas.addEventListener("wheel", event => event.preventDefault(), { passive: false });
 canvas.addEventListener("touchmove", event => event.preventDefault(), { passive: false });
 canvas.addEventListener("pointermove", pointerToTarget);

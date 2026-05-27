@@ -9,6 +9,9 @@ html, body { margin: 0; background: transparent; overflow: hidden; overscroll-be
 .court-shell {
   position: relative;
   overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 4.5s ease, transform 4.5s ease, filter 4.5s ease;
   border: 1px solid rgba(190, 242, 100, 0.34);
   border-radius: 26px;
   padding: 16px;
@@ -17,6 +20,12 @@ html, body { margin: 0; background: transparent; overflow: hidden; overscroll-be
     radial-gradient(circle at 88% 18%, rgba(45, 212, 191, 0.18), transparent 30%),
     linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(20, 83, 45, 0.88));
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255,255,255,0.08);
+}
+body.agent-resting .court-shell {
+  opacity: 0.18;
+  transform: translateY(10px) scale(0.985);
+  filter: grayscale(0.75) blur(1px);
+  pointer-events: none;
 }
 .court-shell::before {
   content: "";
@@ -59,6 +68,24 @@ canvas { display: block; width: 100%; height: min(42vw, 330px); min-height: 230p
   transition: opacity 180ms ease;
 }
 .curtain.show { opacity: 1; pointer-events: auto; }
+.rest-reminder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 20px;
+  color: #f8fafc;
+  background: radial-gradient(circle, rgba(15, 23, 42, 0.24), rgba(2, 6, 23, 0.68));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.8s ease;
+  z-index: 4;
+}
+body.agent-resting .rest-reminder { opacity: 1; }
+.rest-reminder strong { font-size: 1.04rem; }
+.rest-reminder span { color: #d9f99d; font-size: 0.86rem; }
 .curtain strong { font-size: 1.1rem; }
 .curtain span { color: #cbd5e1; font-size: 0.86rem; }
 footer { margin-top: 12px; }
