@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import AttachmentComposer from "./AttachmentComposer.vue";
 import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import { displaySessionName, eventBody, eventTitle, relativeTime, shortId } from "../utils";
@@ -45,11 +46,11 @@ const transcriptSummary = computed(() => {
 });
 async function submitChat() {
   if (!selected.value) return;
-  await props.monitor.sendAgent({ mode: "message", cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft });
+  await props.monitor.sendAgent({ mode: "message", cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft, attachments: state.chatAttachments });
 }
-function queueChat() {
+async function queueChat() {
   if (!selected.value) return;
-  props.monitor.queueAgentMessage({ cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft });
+  await props.monitor.queueAgentMessage({ cwd: selected.value.cwd, sessionId: selected.value.session_id, prompt: state.chatDraft, attachments: state.chatAttachments });
 }
 </script>
 
@@ -80,7 +81,7 @@ function queueChat() {
           <section class="timeline-block raw-events"><h3>Raw session events</h3><article v-for="event in state.rawEvents?.events || []" :key="`${event.kind}-${event.line}`" class="raw-event" :class="event.kind"><header><strong>{{ eventTitle(event) }}</strong><span>{{ event.timestamp ? `${relativeTime(event.timestamp)} · ` : '' }}line {{ event.line ?? '?' }}</span></header><pre v-if="eventBody(event)">{{ eventBody(event) }}</pre></article><p v-if="!state.rawEvents" class="empty">Reading pi JSONL transcript from disk…</p></section>
         </div>
         <form class="chat-compose" aria-label="Send a follow-up message to this agent" @submit.prevent="submitChat">
-          <textarea id="chat-prompt" v-model="state.chatDraft" rows="3" :placeholder="`Message ${name}…`" @keydown.meta.enter.prevent="submitChat" @keydown.ctrl.enter.prevent="submitChat"></textarea>
+          <AttachmentComposer id="chat-prompt" v-model="state.chatDraft" v-model:attachments="state.chatAttachments" :rows="3" :placeholder="`Message ${name}…`" @keydown.meta.enter.prevent="submitChat" @keydown.ctrl.enter.prevent="submitChat" />
           <div class="chat-compose-actions"><span>{{ shortId(selected.session_id) }} · ⌘/ctrl+enter sends now</span><div class="chat-buttons"><button class="secondary" type="button" @click="queueChat">queue</button><button name="mode" value="message" type="submit">send now ↵</button></div></div>
           <section v-if="sessionQueue.length" class="message-queue" aria-label="Queued messages">
             <header><strong>queued messages</strong><span>auto-sends after the agent's next assistant message has been idle for 10s</span></header>

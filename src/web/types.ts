@@ -10,6 +10,21 @@ export type DirectoryEntry = { name: string; path: string };
 export type DirectoryListing = { path: string; parent: string; home: string; entries: DirectoryEntry[] };
 export type DirectoryPickerState = DirectoryListing & { open: boolean; loading: boolean; error: string };
 
+export type PendingAttachment = {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  dataBase64: string;
+};
+
+export type SavedAttachment = {
+  name: string;
+  type: string;
+  size: number;
+  path: string;
+};
+
 export type PiResource = {
   key: string;
   kind: "skill" | "extension";

@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PendingAttachment, PiResourcesPayload, RawSessionEvents, SavedAttachment, SessionDetail, SessionItem, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -83,6 +83,17 @@ export async function renameSession(sessionId: string, body: { name?: string; au
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function uploadAttachments(cwd: string, attachments: PendingAttachment[]): Promise<SavedAttachment[]> {
+  if (!attachments.length) return [];
+  const res = await fetch(`${extensionApiBase()}/api/attachments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cwd, attachments }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return ((await res.json()) as { attachments: SavedAttachment[] }).attachments || [];
 }
 
 export async function submitAgent(mode: "start" | "message", body: Record<string, unknown>): Promise<AgentRun> {

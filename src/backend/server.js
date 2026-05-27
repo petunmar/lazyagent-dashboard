@@ -16,6 +16,10 @@ const maxToolResultChars = Number(process.env.MAX_TOOL_RESULT_CHARS || 12_000);
 const maxThinkingChars = Number(process.env.MAX_THINKING_CHARS || 2_000);
 const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "session-names.json");
 const dashboardSystemPromptFile = process.env.DASHBOARD_SYSTEM_PROMPT_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "system-prompt.md");
+const attachmentRoot = process.env.ATTACHMENT_UPLOAD_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "uploads");
+const maxAttachmentFiles = Math.max(1, Number(process.env.MAX_ATTACHMENT_FILES || 12));
+const maxAttachmentBytes = Math.max(1024, Number(process.env.MAX_ATTACHMENT_BYTES || 25 * 1024 * 1024));
+const maxJsonBodyBytes = Math.max(maxAttachmentBytes * maxAttachmentFiles * 2, Number(process.env.MAX_JSON_BODY_BYTES || 80 * 1024 * 1024));
 const widgetDirs = (process.env.WIDGETS_DIR || path.join(projectRoot, "widgets")).split(path.delimiter).map(value => expandUserPath(value.trim())).filter(Boolean);
 const widgetStateDir = process.env.WIDGET_STATE_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "widgets");
 const agentAppendSystemPrompt = process.env.AGENT_APPEND_SYSTEM_PROMPT || "";
@@ -150,6 +154,14 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/attachments") {
+      const body = await readJson(req);
+      const cwd = expandUserPath(String(body?.cwd || "").trim() || "~");
+      await assertDirectory(cwd);
+      writeJson(res, 201, { attachments: await saveAttachments(body?.attachments, cwd) });
+      return;
+    }
+
     if (req.method === "PUT" && url.pathname === "/api/system-prompt") {
       const body = await readJson(req);
       await writeDashboardSystemPrompt(body?.prompt);
@@ -215,10 +227,13 @@ server.listen(port, host, () => {
 
 async function startAgent(body) {
   const cwd = expandUserPath(String(body?.cwd || "").trim());
-  const prompt = String(body?.prompt || "").trim();
+  let prompt = String(body?.prompt || "").trim();
   if (!cwd) throw httpError(400, "cwd is required");
-  if (!prompt) throw httpError(400, "prompt is required");
   await assertDirectory(cwd);
+  const attachments = await saveAttachments(body?.attachments, cwd);
+  if (!prompt && attachments.length) prompt = "Please review the attached file(s).";
+  if (!prompt) throw httpError(400, "prompt or attachments are required");
+  prompt = promptWithAttachments(prompt, attachments);
 
   const sessionDir = sessionDirForCwd(cwd);
   await mkdir(sessionDir, { recursive: true });
@@ -234,12 +249,15 @@ async function startAgent(body) {
 async function sendAgentMessage(body) {
   const cwd = expandUserPath(String(body?.cwd || "").trim());
   const sessionId = String(body?.session_id || "").trim();
-  const prompt = String(body?.prompt || "").trim();
+  let prompt = String(body?.prompt || "").trim();
   if (!cwd) throw httpError(400, "cwd is required");
   if (!sessionId) throw httpError(400, "session_id is required");
-  if (!prompt) throw httpError(400, "prompt is required");
   if (!/^[A-Za-z0-9_.:T-]+$/.test(sessionId)) throw httpError(400, "invalid session id");
   await assertDirectory(cwd);
+  const attachments = await saveAttachments(body?.attachments, cwd);
+  if (!prompt && attachments.length) prompt = "Please review the attached file(s).";
+  if (!prompt) throw httpError(400, "prompt or attachments are required");
+  prompt = promptWithAttachments(prompt, attachments);
 
   const sessionFile = await findSessionFile(sessionId);
   const sessionDir = path.dirname(sessionFile);
@@ -309,6 +327,42 @@ async function writeDashboardSystemPrompt(value) {
   if (prompt.length > 40_000) throw httpError(400, "system prompt must be 40,000 characters or fewer");
   await mkdir(path.dirname(dashboardSystemPromptFile), { recursive: true });
   await writeFile(dashboardSystemPromptFile, prompt, "utf8");
+}
+
+async function saveAttachments(attachments, cwd) {
+  if (!attachments) return [];
+  if (!Array.isArray(attachments)) throw httpError(400, "attachments must be an array");
+  if (attachments.length > maxAttachmentFiles) throw httpError(400, `too many attachments (max ${maxAttachmentFiles})`);
+  if (!attachments.length) return [];
+  const batch = `${new Date().toISOString().slice(0, 10)}/${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
+  const dir = path.join(attachmentRoot, batch);
+  await mkdir(dir, { recursive: true });
+  const saved = [];
+  for (const [index, item] of attachments.entries()) {
+    const name = sanitizeFilename(String(item?.name || `attachment-${index + 1}`));
+    const type = String(item?.type || "application/octet-stream").slice(0, 120);
+    const base64 = String(item?.dataBase64 || item?.data_base64 || "");
+    if (!base64) throw httpError(400, `attachment ${name} is missing data`);
+    const buffer = Buffer.from(base64, "base64");
+    if (!buffer.length) throw httpError(400, `attachment ${name} is empty`);
+    if (buffer.length > maxAttachmentBytes) throw httpError(400, `attachment ${name} exceeds ${Math.round(maxAttachmentBytes / 1024 / 1024)} MB`);
+    const filename = `${String(index + 1).padStart(2, "0")}-${name}`;
+    const full = path.join(dir, filename);
+    await writeFile(full, buffer);
+    saved.push({ name, type, size: buffer.length, path: full, cwd });
+  }
+  return saved;
+}
+
+function sanitizeFilename(value) {
+  const base = path.basename(value).normalize("NFKD").replace(/[^A-Za-z0-9._ -]/g, "_").replace(/\s+/g, " ").trim();
+  return (base || "attachment").slice(0, 160);
+}
+
+function promptWithAttachments(prompt, attachments) {
+  if (!attachments?.length) return prompt;
+  const lines = attachments.map(file => `- ${file.name} (${file.type || "file"}, ${file.size} bytes): ${file.path}`);
+  return `${prompt}\n\nAttached files saved on the dashboard host:\n${lines.join("\n")}\n\nUse the file paths above when you need to inspect the attachments.`;
 }
 
 function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "" }) {
@@ -1381,7 +1435,12 @@ function contentType(file) {
 
 async function readJson(req) {
   let raw = "";
-  for await (const chunk of req) raw += chunk;
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > maxJsonBodyBytes) throw httpError(413, "request body too large");
+    raw += chunk;
+  }
   if (!raw.trim()) return {};
   try {
     return JSON.parse(raw);

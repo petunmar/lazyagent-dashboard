@@ -632,6 +632,58 @@ button.ghost { border-color: var(--line); color: var(--muted); }
 }
 .directory-current-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .prompt-field { grid-column: 1 / -1; }
+.attachment-composer {
+  display: grid;
+  gap: 8px;
+  border-radius: 12px;
+}
+.attachment-composer:focus-within { outline: 0; }
+.attachment-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font: 700 11px "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.attachment-button {
+  display: inline-flex;
+  width: auto;
+  gap: 7px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,.025);
+  color: var(--lime);
+  cursor: pointer;
+}
+.attachment-button input { display: none; }
+.attachment-list { display: grid; gap: 7px; }
+.attachment-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: rgba(255,255,255,.025);
+  font-family: "JetBrains Mono", monospace;
+}
+.attachment-chip strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cream);
+  font-size: 12px;
+}
+.attachment-chip small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.attachment-chip button { padding: 7px 10px; font-size: 11px; }
 .agent-options { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 180px 180px; gap: 12px; align-items: end; }
 .checkbox { display: flex; flex-direction: row; align-items: center; gap: 10px; padding-bottom: 12px; }
 .checkbox input { width: auto; }

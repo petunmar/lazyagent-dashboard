@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -23,6 +23,7 @@ type State = {
   cardTools: Record<string, ToolSparkItem[]>;
   loadingCardTools: Set<string>;
   chatDraft: string;
+  chatAttachments: PendingAttachment[];
   cwdDraft: string;
   transcriptMode: TranscriptMode;
   directoryPicker: DirectoryPickerState;
@@ -76,6 +77,7 @@ const state = reactive<State>({
   cardTools: {},
   loadingCardTools: new Set(),
   chatDraft: "",
+  chatAttachments: [],
   cwdDraft: "",
   transcriptMode: "recent",
   directoryPicker: { open: false, path: "", parent: "", home: "", entries: [], loading: false, error: "" },
@@ -328,12 +330,13 @@ export function useAgentMonitor() {
     }
   }
 
-  async function sendAgent(form: { mode: "start" | "message"; cwd: string; prompt: string; sessionId?: string; model?: string; thinking?: string; readonly?: boolean }): Promise<void> {
+  async function sendAgent(form: { mode: "start" | "message"; cwd: string; prompt: string; sessionId?: string; model?: string; thinking?: string; readonly?: boolean; attachments?: PendingAttachment[] }): Promise<void> {
     const cwd = form.cwd.trim();
-    const prompt = form.prompt.trim();
+    const attachments = form.attachments || [];
+    const prompt = form.prompt.trim() || (attachments.length ? "Please review the attached file(s)." : "");
     const sessionId = (form.sessionId || "").trim();
     if (!cwd || !prompt) {
-      state.error = "Working directory and message are required.";
+      state.error = "Working directory and a message or attachment are required.";
       return;
     }
     if (form.mode === "message" && !sessionId) {
@@ -341,11 +344,12 @@ export function useAgentMonitor() {
       return;
     }
     try {
-      const run = await submitAgent(form.mode, { cwd, prompt, session_id: sessionId, model: form.model || "", thinking: form.thinking || "", readonly: !!form.readonly });
+      const run = await submitAgent(form.mode, { cwd, prompt, session_id: sessionId, model: form.model || "", thinking: form.thinking || "", readonly: !!form.readonly, attachments });
       state.runs = [run, ...state.runs.filter(r => r.run_id !== run.run_id)];
       state.error = "";
       state.modal = null;
       state.chatDraft = "";
+      state.chatAttachments = [];
       window.setTimeout(() => void refreshRuns(), 1000);
       scheduleQueueCheck();
     } catch (error) {
@@ -353,22 +357,31 @@ export function useAgentMonitor() {
     }
   }
 
-  function queueAgentMessage(form: { cwd: string; prompt: string; sessionId?: string }): boolean {
+  async function queueAgentMessage(form: { cwd: string; prompt: string; sessionId?: string; attachments?: PendingAttachment[] }): Promise<boolean> {
     const cwd = form.cwd.trim();
-    const prompt = form.prompt.trim();
+    const attachments = form.attachments || [];
+    let prompt = form.prompt.trim() || (attachments.length ? "Please review the attached file(s)." : "");
     const sessionId = (form.sessionId || "").trim();
     if (!cwd || !prompt) {
-      state.error = "Working directory and message are required.";
+      state.error = "Working directory and a message or attachment are required.";
       return false;
     }
     if (!sessionId) {
       state.error = "Choose or enter a session ID to queue a message.";
       return false;
     }
+    try {
+      const saved = await uploadAttachments(cwd, attachments);
+      prompt = promptWithAttachments(prompt, saved);
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      return false;
+    }
     state.messageQueue.push({ id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, session_id: sessionId, cwd, prompt, created_at: new Date().toISOString(), status: "waiting" });
     saveMessageQueue();
     state.error = "";
     state.chatDraft = "";
+    state.chatAttachments = [];
     scheduleQueueCheck();
     return true;
   }
@@ -519,6 +532,12 @@ export function useAgentMonitor() {
   function setResourceFilter(filter: PiResourceKind): void {
     state.piResourceFilter = filter;
     state.selectedResourceKey = "";
+  }
+
+  function promptWithAttachments(prompt: string, attachments: SavedAttachment[]): string {
+    if (!attachments.length) return prompt;
+    const lines = attachments.map(file => `- ${file.name} (${file.type || "file"}, ${file.size} bytes): ${file.path}`);
+    return `${prompt}\n\nAttached files saved on the dashboard host:\n${lines.join("\n")}\n\nUse the file paths above when you need to inspect the attachments.`;
   }
 
   function useManagedProxy(): void {
