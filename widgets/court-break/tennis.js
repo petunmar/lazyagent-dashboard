@@ -30,9 +30,11 @@ let rally = 0;
 let shake = 0;
 let cometHue = 80;
 
-const player = { x: 42, y: H / 2 - 42, w: 14, h: 84, target: H / 2, speed: 520 };
-const bot = { x: W - 56, y: H / 2 - 42, w: 14, h: 84, speed: 390, nerve: 0.78 };
+const player = { x: 52, y: H / 2 - 42, w: 14, h: 84, targetX: 52, targetY: H / 2, speed: 520, footwork: 430, lastX: 52, lastY: H / 2 - 42, vx: 0, vy: 0 };
+const bot = { x: W - 66, y: H / 2 - 42, w: 14, h: 84, targetX: W - 66, targetY: H / 2, speed: 390, footwork: 360, nerve: 0.78, lastX: W - 66, lastY: H / 2 - 42, vx: 0, vy: 0 };
 const ball = { x: W / 2, y: H / 2, r: 8, vx: 0, vy: 0, spin: 0, speed: 520 };
+const playerBounds = { minX: 34, maxX: W * 0.42 - player.w };
+const botBounds = { minX: W * 0.58, maxX: W - 34 - bot.w };
 
 function postHeight() {
   const params = new URLSearchParams(location.search);
@@ -73,11 +75,19 @@ function updateHud() {
   rallyEl.textContent = rally;
 }
 
-function movePaddle(paddle, target, dt, speed = paddle.speed) {
-  const center = paddle.y + paddle.h / 2;
-  const delta = target - center;
-  const step = Math.sign(delta) * Math.min(Math.abs(delta), speed * dt);
-  paddle.y = clamp(paddle.y + step, 14, H - paddle.h - 14);
+function movePaddle(paddle, targetY, targetX, bounds, dt, speed = paddle.speed) {
+  paddle.lastX = paddle.x;
+  paddle.lastY = paddle.y;
+  const centerY = paddle.y + paddle.h / 2;
+  const deltaY = targetY - centerY;
+  const stepY = Math.sign(deltaY) * Math.min(Math.abs(deltaY), speed * dt);
+  paddle.y = clamp(paddle.y + stepY, 14, H - paddle.h - 14);
+
+  const deltaX = targetX - paddle.x;
+  const stepX = Math.sign(deltaX) * Math.min(Math.abs(deltaX), paddle.footwork * dt);
+  paddle.x = clamp(paddle.x + stepX, bounds.minX, bounds.maxX);
+  paddle.vx = dt ? (paddle.x - paddle.lastX) / dt : 0;
+  paddle.vy = dt ? (paddle.y - paddle.lastY) / dt : 0;
 }
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -89,10 +99,12 @@ function collide(paddle, side) {
 
   const impact = ((ball.y - (paddle.y + paddle.h / 2)) / (paddle.h / 2));
   const clean = 1 - Math.min(1, Math.abs(impact));
-  const speed = Math.min(880, Math.hypot(ball.vx, ball.vy) + 24 + clean * 34);
-  ball.vx = (side === "left" ? 1 : -1) * speed;
-  ball.vy = impact * 430 + (side === "left" ? player.target - (player.y + player.h / 2) : 0) * 2.1;
-  ball.spin = impact * 1.45;
+  const direction = side === "left" ? 1 : -1;
+  const steppingIn = Math.max(0, paddle.vx * direction);
+  const speed = Math.min(960, Math.hypot(ball.vx, ball.vy) + 24 + clean * 34 + steppingIn * 0.22);
+  ball.vx = direction * speed;
+  ball.vy = impact * 430 + paddle.vy * 0.34;
+  ball.spin = impact * 1.45 + paddle.vx * 0.0012;
   ball.x = side === "left" ? paddle.x + paddle.w + ball.r : paddle.x - ball.r;
   rally += 1;
   cometHue = side === "left" ? 85 + clean * 70 : 175;
@@ -117,14 +129,22 @@ function score(winner) {
 }
 
 function update(dt) {
-  if (keys.has("arrowup") || keys.has("w")) player.target -= player.speed * dt * 1.6;
-  if (keys.has("arrowdown") || keys.has("s")) player.target += player.speed * dt * 1.6;
-  player.target = clamp(player.target, player.h / 2 + 14, H - player.h / 2 - 14);
-  movePaddle(player, player.target, dt);
+  if (keys.has("arrowup") || keys.has("w")) player.targetY -= player.speed * dt * 1.6;
+  if (keys.has("arrowdown") || keys.has("s")) player.targetY += player.speed * dt * 1.6;
+  if (keys.has("arrowleft") || keys.has("a")) player.targetX -= player.footwork * dt * 1.7;
+  if (keys.has("arrowright") || keys.has("d")) player.targetX += player.footwork * dt * 1.7;
+  player.targetY = clamp(player.targetY, player.h / 2 + 14, H - player.h / 2 - 14);
+  player.targetX = clamp(player.targetX, playerBounds.minX, playerBounds.maxX);
+  movePaddle(player, player.targetY, player.targetX, playerBounds, dt);
 
   const botMistake = Math.sin(performance.now() / 700) * (zen ? 28 : 54) + (1 - bot.nerve) * 80;
-  const botTarget = ball.y + (ball.vx > 0 ? botMistake : 0);
-  movePaddle(bot, botTarget, dt, zen ? 310 : bot.speed + rally * 3);
+  const botTargetY = ball.y + (ball.vx > 0 ? botMistake : 0);
+  const homeX = zen ? botBounds.maxX - 6 : botBounds.maxX - 22;
+  const attackX = botBounds.minX + clamp((ball.x - W * 0.50) / (W * 0.18), 0, 1) * (botBounds.maxX - botBounds.minX);
+  bot.targetX = ball.vx > 0 ? attackX + Math.sin(performance.now() / 430) * (zen ? 8 : 16) : homeX;
+  bot.targetX = clamp(bot.targetX, botBounds.minX, botBounds.maxX);
+  bot.targetY = clamp(botTargetY, bot.h / 2 + 14, H - bot.h / 2 - 14);
+  movePaddle(bot, bot.targetY, bot.targetX, botBounds, dt, zen ? 310 : bot.speed + rally * 3);
 
   if (!waiting) {
     ball.vy += ball.spin * 260 * dt;
@@ -265,12 +285,14 @@ function loop(now) {
 
 function pointerToTarget(event) {
   const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width * W;
   const y = (event.clientY - rect.top) / rect.height * H;
-  player.target = clamp(y, player.h / 2 + 14, H - player.h / 2 - 14);
+  player.targetX = clamp(x - player.w / 2, playerBounds.minX, playerBounds.maxX);
+  player.targetY = clamp(y, player.h / 2 + 14, H - player.h / 2 - 14);
 }
 
 function isControlKey(key) {
-  return key === " " || key === "arrowup" || key === "arrowdown" || key === "w" || key === "s";
+  return key === " " || key === "arrowup" || key === "arrowdown" || key === "arrowleft" || key === "arrowright" || key === "w" || key === "a" || key === "s" || key === "d";
 }
 
 window.addEventListener("keydown", event => {
