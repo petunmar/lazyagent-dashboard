@@ -251,13 +251,14 @@ export function useAgentMonitor() {
     if (!state.selectedId) return;
     const id = state.selectedId;
     try {
+      const shouldStickToBottom = transcriptShouldStickToBottom();
       const raw = await fetchSessionEvents(id, state.transcriptMode === "full" ? 1000 : 40);
       if (state.selectedId === id) {
         state.rawEvents = raw;
         state.cardTools[id] = extractToolNames(raw.events);
         state.error = "";
         await nextTick();
-        pinTranscriptIfRecent();
+        if (shouldStickToBottom) pinTranscriptIfRecent();
         scheduleQueueCheck();
       }
     } catch (error) {
@@ -572,6 +573,15 @@ export function useAgentMonitor() {
   function disconnectEvents(): void {
     events?.close();
     events = null;
+  }
+
+  function transcriptShouldStickToBottom(): boolean {
+    if (state.view !== "detail" || state.transcriptMode !== "recent") return false;
+    if (!state.rawEvents) return true;
+    const element = document.querySelector<HTMLElement>(".transcript-body");
+    if (!element) return true;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    return distanceFromBottom < 80;
   }
 
   function pinTranscriptIfRecent(): void {
