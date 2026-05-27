@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, SpendSummary, Stats, WidgetManifest, WidgetStatus } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PiResourcesPayload, RawSessionEvents, SessionDetail, SessionItem, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -104,6 +104,28 @@ export async function fetchAgentRuns(): Promise<AgentRun[]> {
 
 export async function fetchPiResources(cwd: string): Promise<PiResourcesPayload> {
   const res = await fetch(`${extensionApiBase()}/api/pi-resources?cwd=${encodeURIComponent(cwd)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchGitInfo(cwd: string): Promise<GitInfo> {
+  const res = await fetch(`${extensionApiBase()}/api/git-info?cwd=${encodeURIComponent(cwd)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchSystemPrompt(): Promise<SystemPromptConfig> {
+  const res = await fetch(`${extensionApiBase()}/api/system-prompt`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function saveSystemPrompt(prompt: string): Promise<SystemPromptConfig> {
+  const res = await fetch(`${extensionApiBase()}/api/system-prompt`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

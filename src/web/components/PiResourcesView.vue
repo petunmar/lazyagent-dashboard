@@ -20,7 +20,15 @@ const extensions = computed(() => state.piResources?.resources.filter(r => r.kin
   </section>
   <p v-if="state.piResourcesError" class="error-banner">{{ state.piResourcesError }}</p>
   <section v-if="state.piResourcesLoading && !state.piResources" class="console-card"><p class="empty loading">Loading Pi resources…</p></section>
-  <section v-else-if="state.piResources" class="resources-layout">
+  <section v-else-if="state.piResources" class="system-prompt-panel console-card">
+    <div class="console-head"><span>appended system prompt</span><h2>Dashboard prompt</h2></div>
+    <p class="system-prompt-help">This editable prompt is appended to every Pi run launched from Agent Monitor, before Widget prompts. Use it for local operating rules such as repo-specific branch, worktree, PR, or deployment habits.</p>
+    <textarea v-model="state.systemPromptDraft" class="system-prompt-editor" placeholder="Example: When starting new work in fenra-monorepo, do it in a new worktree and on a new branch. Commit and push to that branch and create a PR when done."></textarea>
+    <div class="system-prompt-actions"><button type="button" @click="monitor.saveDashboardSystemPrompt()">{{ state.systemPromptSaving ? 'saving…' : 'save dashboard prompt' }}</button><code v-if="state.systemPrompt?.path">{{ state.systemPrompt.path }}</code><span v-if="state.systemPromptStatus" class="save-status">{{ state.systemPromptStatus }}</span></div>
+    <div v-if="state.systemPrompt?.env_prompt" class="prompt-source"><div><span class="resource-kind extension">env</span><strong>AGENT_APPEND_SYSTEM_PROMPT</strong></div><pre class="resource-source"><code>{{ state.systemPrompt.env_prompt }}</code></pre></div>
+    <div class="widget-prompts"><h3>Widget system prompts</h3><p v-if="!state.systemPrompt?.widgets.length" class="empty">No loaded Widgets expose a system prompt.</p><div v-for="widget in state.systemPrompt?.widgets" :key="widget.id" class="prompt-source"><div><span class="resource-kind extension">widget</span><strong>{{ widget.name }}</strong><code>{{ widget.id }}</code></div><pre class="resource-source"><code>{{ widget.prompt }}</code></pre></div></div>
+  </section>
+  <section v-if="state.piResources" class="resources-layout">
     <aside class="console-card resources-list-card">
       <div class="console-head"><span>inventory</span><h2>{{ resources.length }} visible</h2></div>
       <div class="filter-pills resource-filters"><button v-for="filter in filters" :key="filter" class="pill" :class="{ active: state.piResourceFilter === filter }" type="button" @click="monitor.setResourceFilter(filter)">{{ filter }}</button></div>
@@ -29,5 +37,5 @@ const extensions = computed(() => state.piResources?.resources.filter(r => r.kin
     </aside>
     <section class="console-card resource-detail-card"><template v-if="selected"><div class="resource-detail-head"><div><span class="resource-kind" :class="selected.kind">{{ selected.kind }}</span><h2>{{ selected.name }}</h2><p>{{ selected.description || 'No description found.' }}</p></div><code>{{ selected.scope }}</code></div><dl class="resource-meta"><div><dt>path</dt><dd><code>{{ selected.path }}</code></dd></div><div><dt>root</dt><dd><code>{{ selected.root }}</code></dd></div></dl><pre class="resource-source"><code>{{ selected.content }}</code></pre></template><p v-else class="empty">Choose a skill or extension.</p></section>
   </section>
-  <section v-else class="console-card"><p class="empty">No Pi resources loaded yet.</p></section>
+  <section v-if="!state.piResourcesLoading && !state.piResources" class="console-card"><p class="empty">No Pi resources loaded yet.</p></section>
 </template>

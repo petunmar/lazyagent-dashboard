@@ -29,6 +29,31 @@ export type PiResourcesPayload = {
   resources: PiResource[];
 };
 
+export type GitShortstat = { files_changed: number; insertions: number; deletions: number };
+export type GitInfo = {
+  cwd: string;
+  generated_at: string;
+  is_git_repo: boolean;
+  cached?: boolean;
+  error?: string;
+  root?: string;
+  worktree?: string;
+  main_worktree?: string;
+  is_worktree?: boolean;
+  branch?: string;
+  upstream?: { ahead: number; behind: number; has_upstream: boolean };
+  status?: { changed: number; staged: number; unstaged: number; untracked: number; added: number; modified: number; deleted: number; renamed: number; conflicted: number };
+  diff?: { files_changed: number; insertions: number; deletions: number; unstaged: GitShortstat; staged: GitShortstat };
+  worktrees?: number;
+};
+
+export type SystemPromptConfig = {
+  prompt: string;
+  path: string;
+  env_prompt: string;
+  widgets: { id: string; name: string; prompt: string }[];
+};
+
 export type AuthInfo = {
   salt: string;
   iterations: number;

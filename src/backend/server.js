@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac, pbkdf2Sync } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -15,6 +15,7 @@ const maxEvents = Number(process.env.MAX_SESSION_EVENTS || 250);
 const maxToolResultChars = Number(process.env.MAX_TOOL_RESULT_CHARS || 12_000);
 const maxThinkingChars = Number(process.env.MAX_THINKING_CHARS || 2_000);
 const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "session-names.json");
+const dashboardSystemPromptFile = process.env.DASHBOARD_SYSTEM_PROMPT_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "system-prompt.md");
 const widgetDirs = (process.env.WIDGETS_DIR || path.join(projectRoot, "widgets")).split(path.delimiter).map(value => expandUserPath(value.trim())).filter(Boolean);
 const widgetStateDir = process.env.WIDGET_STATE_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "widgets");
 const agentAppendSystemPrompt = process.env.AGENT_APPEND_SYSTEM_PROMPT || "";
@@ -35,6 +36,8 @@ const tennisPlayers = [
   "Iga Świątek", "Carlos Alcaraz", "Jannik Sinner", "Coco Gauff", "Aryna Sabalenka"
 ];
 const runs = new Map();
+const gitInfoCache = new Map();
+const gitInfoTtlMs = Math.max(30_000, Number(process.env.GIT_INFO_TTL_MS || 300_000));
 const widgetsReady = loadWidgets();
 
 const server = createServer(async (req, res) => {
@@ -136,6 +139,24 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/git-info") {
+      const payload = await gitInfo(url.searchParams.get("cwd"));
+      writeJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/system-prompt") {
+      writeJson(res, 200, await systemPromptConfig(widgets));
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/system-prompt") {
+      const body = await readJson(req);
+      await writeDashboardSystemPrompt(body?.prompt);
+      writeJson(res, 200, await systemPromptConfig(widgets));
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/spend") {
       writeJson(res, 200, await spendSummary());
       return;
@@ -230,6 +251,8 @@ async function sendAgentMessage(body) {
 async function piRunArgs(baseArgs) {
   const prompts = [];
   if (agentAppendSystemPrompt.trim()) prompts.push(agentAppendSystemPrompt.trim());
+  const dashboardPrompt = await readDashboardSystemPrompt();
+  if (dashboardPrompt.trim()) prompts.push(dashboardPrompt.trim());
   for (const widget of await widgetsReady) {
     const prompt = await widgetSystemPrompt(widget);
     if (prompt) prompts.push(prompt);
@@ -246,6 +269,46 @@ async function widgetSystemPrompt(widget) {
     return typeof prompt === "string" ? prompt.trim() : "";
   }
   return "";
+}
+
+async function systemPromptConfig(widgets) {
+  const widgetPrompts = [];
+  for (const widget of widgets) {
+    const prompt = await widgetSystemPrompt(widget);
+    if (!prompt) continue;
+    widgetPrompts.push({
+      id: widget.manifest.id,
+      name: widget.manifest.name || widget.manifest.id,
+      prompt,
+    });
+  }
+  return {
+    prompt: await readDashboardSystemPrompt(),
+    path: dashboardSystemPromptFile,
+    env_prompt: agentAppendSystemPrompt,
+    widgets: widgetPrompts,
+  };
+}
+
+async function readDashboardSystemPrompt() {
+  try {
+    const content = await readFile(dashboardSystemPromptFile, "utf8");
+    if (dashboardSystemPromptFile.endsWith(".json")) {
+      const parsed = JSON.parse(content);
+      return typeof parsed?.prompt === "string" ? parsed.prompt : "";
+    }
+    return content;
+  } catch (error) {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+async function writeDashboardSystemPrompt(value) {
+  const prompt = String(value || "");
+  if (prompt.length > 40_000) throw httpError(400, "system prompt must be 40,000 characters or fewer");
+  await mkdir(path.dirname(dashboardSystemPromptFile), { recursive: true });
+  await writeFile(dashboardSystemPromptFile, prompt, "utf8");
 }
 
 function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "" }) {
@@ -423,6 +486,134 @@ async function piResources(requestedCwd) {
     packages,
     resources: [...skills, ...extensions].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
   };
+}
+
+async function gitInfo(requestedCwd) {
+  const cwd = path.resolve(String(requestedCwd || process.cwd()).replace(/^~(?=\/|$)/, homedir()));
+  await assertDirectory(cwd);
+  const cached = gitInfoCache.get(cwd);
+  if (cached && Date.now() - cached.fetchedAt < gitInfoTtlMs) return { ...cached.payload, cached: true };
+
+  const payload = await computeGitInfo(cwd);
+  gitInfoCache.set(cwd, { fetchedAt: Date.now(), payload });
+  return payload;
+}
+
+async function computeGitInfo(cwd) {
+  const generatedAt = new Date().toISOString();
+  const inside = (await git(cwd, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")).trim() === "true";
+  if (!inside) return { cwd, generated_at: generatedAt, is_git_repo: false, error: "not a git work tree" };
+
+  const [topLevelRaw, branchRaw, commonDirRaw, gitDirRaw, statusRaw, diffRaw, stagedRaw, upstreamRaw, worktreesRaw] = await Promise.all([
+    git(cwd, ["rev-parse", "--show-toplevel"]),
+    git(cwd, ["branch", "--show-current"]).catch(() => ""),
+    git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => ""),
+    git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]).catch(() => ""),
+    git(cwd, ["status", "--porcelain=v1"]).catch(() => ""),
+    git(cwd, ["diff", "--shortstat"]).catch(() => ""),
+    git(cwd, ["diff", "--cached", "--shortstat"]).catch(() => ""),
+    git(cwd, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]).catch(() => ""),
+    git(cwd, ["worktree", "list", "--porcelain"]).catch(() => ""),
+  ]);
+
+  const root = topLevelRaw.trim();
+  const worktrees = parseWorktrees(worktreesRaw);
+  const currentWorktree = worktrees.find(item => item.path === root) || null;
+  const upstream = parseAheadBehind(upstreamRaw);
+  const status = parseGitStatus(statusRaw);
+  const unstaged = parseShortstat(diffRaw);
+  const staged = parseShortstat(stagedRaw);
+  const commonDir = commonDirRaw.trim();
+  const gitDir = gitDirRaw.trim();
+  const mainWorktree = worktrees[0]?.path || root;
+  const branch = branchRaw.trim() || currentWorktree?.branch?.replace(/^refs\/heads\//, "") || (currentWorktree?.detached ? "detached" : "");
+
+  return {
+    cwd,
+    generated_at: generatedAt,
+    is_git_repo: true,
+    root,
+    worktree: root,
+    main_worktree: mainWorktree,
+    is_worktree: Boolean(commonDir && gitDir && commonDir !== gitDir) || (worktrees.length > 1 && root !== mainWorktree),
+    branch,
+    upstream,
+    status,
+    diff: {
+      files_changed: unstaged.files_changed + staged.files_changed,
+      insertions: unstaged.insertions + staged.insertions,
+      deletions: unstaged.deletions + staged.deletions,
+      unstaged,
+      staged,
+    },
+    worktrees: worktrees.length,
+    cached: false,
+  };
+}
+
+function git(cwd, args) {
+  return new Promise((resolve, reject) => {
+    const child = execFile("git", args, { cwd, timeout: 2500, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        error.message = (stderr || error.message).trim();
+        reject(error);
+      } else {
+        resolve(stdout);
+      }
+    });
+    child.stdin?.end();
+  });
+}
+
+function parseGitStatus(output) {
+  const counts = { changed: 0, staged: 0, unstaged: 0, untracked: 0, added: 0, modified: 0, deleted: 0, renamed: 0, conflicted: 0 };
+  for (const line of output.split(/\r?\n/).filter(Boolean)) {
+    const x = line[0];
+    const y = line[1];
+    counts.changed += 1;
+    if (line.startsWith("??")) { counts.untracked += 1; continue; }
+    if ("ADMRCT".includes(x)) counts.staged += 1;
+    if ("ADMRCT".includes(y)) counts.unstaged += 1;
+    if (x === "A" || y === "A") counts.added += 1;
+    if (x === "M" || y === "M") counts.modified += 1;
+    if (x === "D" || y === "D") counts.deleted += 1;
+    if (x === "R" || y === "R") counts.renamed += 1;
+    if (x === "U" || y === "U" || ("AD".includes(x) && "AD".includes(y))) counts.conflicted += 1;
+  }
+  return counts;
+}
+
+function parseShortstat(output) {
+  const files = output.match(/(\d+) files? changed/);
+  const insertions = output.match(/(\d+) insertions?\(\+\)/);
+  const deletions = output.match(/(\d+) deletions?\(-\)/);
+  return { files_changed: Number(files?.[1] || 0), insertions: Number(insertions?.[1] || 0), deletions: Number(deletions?.[1] || 0) };
+}
+
+function parseAheadBehind(output) {
+  const [behind, ahead] = output.trim().split(/\s+/).map(value => Number(value));
+  if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return { ahead: 0, behind: 0, has_upstream: false };
+  return { ahead, behind, has_upstream: true };
+}
+
+function parseWorktrees(output) {
+  const worktrees = [];
+  let current = null;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) {
+      if (current) worktrees.push(current);
+      current = null;
+      continue;
+    }
+    const [key, ...rest] = line.split(" ");
+    const value = rest.join(" ").trim();
+    if (key === "worktree") current = { path: value, branch: "", detached: false, bare: false };
+    else if (current && key === "branch") current.branch = value;
+    else if (current && key === "detached") current.detached = true;
+    else if (current && key === "bare") current.bare = true;
+  }
+  if (current) worktrees.push(current);
+  return worktrees;
 }
 
 async function readSettingsFile(file) {
@@ -1272,7 +1463,7 @@ function setSecurityHeaders(req, res) {
     `frame-ancestors ${widgetFrame ? "'self'" : "'none'"}`,
   ].join("; "));
   res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (!authEnabled) {
     res.setHeader("Access-Control-Allow-Origin", "*");

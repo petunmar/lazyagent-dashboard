@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -27,10 +27,16 @@ type State = {
   transcriptMode: TranscriptMode;
   directoryPicker: DirectoryPickerState;
   piResources: PiResourcesPayload | null;
+  gitInfoByCwd: Record<string, GitInfo>;
+  gitInfoLoading: Record<string, boolean>;
   piResourcesLoading: boolean;
   piResourcesError: string;
   piResourceFilter: PiResourceKind;
   selectedResourceKey: string;
+  systemPrompt: SystemPromptConfig | null;
+  systemPromptDraft: string;
+  systemPromptSaving: boolean;
+  systemPromptStatus: string;
   widgets: WidgetManifest[];
   widgetStatuses: WidgetStatus[];
   widgetFrameHeights: Record<string, number>;
@@ -74,10 +80,16 @@ const state = reactive<State>({
   transcriptMode: "recent",
   directoryPicker: { open: false, path: "", parent: "", home: "", entries: [], loading: false, error: "" },
   piResources: null,
+  gitInfoByCwd: {},
+  gitInfoLoading: {},
   piResourcesLoading: false,
   piResourcesError: "",
   piResourceFilter: "all",
   selectedResourceKey: "",
+  systemPrompt: null,
+  systemPromptDraft: "",
+  systemPromptSaving: false,
+  systemPromptStatus: "",
   widgets: [],
   widgetStatuses: [],
   widgetFrameHeights: {},
@@ -149,6 +161,7 @@ export function useAgentMonitor() {
       if (state.selectedId !== previous) clearSelectedPayload();
       state.error = "";
       void loadSelectedDetail();
+      void loadSelectedGitInfo();
       void loadRawEvents();
       void loadVisibleCardTools();
       void loadWidgetStatuses();
@@ -174,6 +187,7 @@ export function useAgentMonitor() {
     if (location.pathname !== "/") history.pushState({ view: "detail" }, "", "/");
     state.modal = null;
     void loadSelectedDetail();
+    void loadSelectedGitInfo();
     void loadRawEvents();
   }
 
@@ -184,6 +198,7 @@ export function useAgentMonitor() {
       state.chatDraft = "";
       state.transcriptMode = "recent";
       void loadSelectedDetail();
+      void loadSelectedGitInfo();
       void loadRawEvents();
     }
     state.modal = modal;
@@ -200,17 +215,35 @@ export function useAgentMonitor() {
     const id = state.selectedId;
     try {
       const detail = await client.session(id);
-      if (state.selectedId === id) state.selectedDetail = detail;
+      if (state.selectedId === id) {
+        state.selectedDetail = detail;
+        void loadSelectedGitInfo();
+      }
     } catch (error) {
       try {
         const detail = await fetchSessionSummary(id);
         if (state.selectedId === id) {
           state.selectedDetail = detail;
           state.error = "";
+          void loadSelectedGitInfo();
         }
       } catch {
         if (state.selectedId === id) state.error = error instanceof Error ? error.message : String(error);
       }
+    }
+  }
+
+  async function loadSelectedGitInfo(force = false): Promise<void> {
+    const cwd = gitTargetCwd(selectedSession.value, state.selectedDetail);
+    if (!cwd || state.gitInfoLoading[cwd]) return;
+    if (!force && state.gitInfoByCwd[cwd]) return;
+    state.gitInfoLoading[cwd] = true;
+    try {
+      state.gitInfoByCwd[cwd] = await fetchGitInfo(cwd);
+    } catch (error) {
+      state.gitInfoByCwd[cwd] = { cwd, generated_at: new Date().toISOString(), is_git_repo: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      state.gitInfoLoading[cwd] = false;
     }
   }
 
@@ -455,12 +488,30 @@ export function useAgentMonitor() {
     state.piResourcesLoading = true;
     state.piResourcesError = "";
     try {
-      state.piResources = await fetchPiResources(selectedSession.value?.cwd || "/home/petur");
+      const [resources, prompt] = await Promise.all([fetchPiResources(selectedSession.value?.cwd || "/home/petur"), fetchSystemPrompt()]);
+      state.piResources = resources;
+      state.systemPrompt = prompt;
+      state.systemPromptDraft = prompt.prompt;
       state.selectedResourceKey ||= state.piResources.resources[0]?.key || "";
     } catch (error) {
       state.piResourcesError = error instanceof Error ? error.message : String(error);
     } finally {
       state.piResourcesLoading = false;
+    }
+  }
+
+  async function saveDashboardSystemPrompt(): Promise<void> {
+    state.systemPromptSaving = true;
+    state.systemPromptStatus = "";
+    try {
+      const prompt = await saveSystemPrompt(state.systemPromptDraft);
+      state.systemPrompt = prompt;
+      state.systemPromptDraft = prompt.prompt;
+      state.systemPromptStatus = "saved";
+    } catch (error) {
+      state.systemPromptStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.systemPromptSaving = false;
     }
   }
 
@@ -487,6 +538,12 @@ export function useAgentMonitor() {
     state.rawEvents = null;
   }
 
+  function gitTargetCwd(session: SessionItem | undefined, detail: SessionDetail | null): string {
+    const lastWrite = detail?.last_file_write || "";
+    if (lastWrite.startsWith("/")) return lastWrite.replace(/\/[^/]*$/, "") || lastWrite;
+    return session?.cwd || detail?.cwd || "";
+  }
+
   function connectEvents(): void {
     if (!client) return;
     events = new EventSource(client.eventsUrl());
@@ -502,6 +559,7 @@ export function useAgentMonitor() {
       state.status = `live · ${new Date().toLocaleTimeString()}`;
       void loadSessionNames();
       void loadSelectedDetail();
+      void loadSelectedGitInfo();
       void loadRawEvents();
       void loadVisibleCardTools();
       void loadWidgetStatuses();
@@ -533,6 +591,7 @@ export function useAgentMonitor() {
     openModal,
     closeModal,
     loadSelectedDetail,
+    loadSelectedGitInfo,
     loadRawEvents,
     setTranscriptMode,
     loadVisibleCardTools,
@@ -549,6 +608,7 @@ export function useAgentMonitor() {
     openDirectoryPicker,
     selectDirectory,
     loadPiResources,
+    saveDashboardSystemPrompt,
     setResourceFilter,
     handlePopstate,
     useManagedProxy,

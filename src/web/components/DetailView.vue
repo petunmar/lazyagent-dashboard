@@ -15,6 +15,26 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
   return !!selected.value && !!status?.session_highlights?.includes(selected.value.session_id);
 }));
 const sessionQueue = computed(() => selected.value ? state.messageQueue.filter(message => message.session_id === selected.value.session_id) : []);
+const gitTarget = computed(() => {
+  const lastWrite = state.selectedDetail?.last_file_write || "";
+  if (lastWrite.startsWith("/")) return lastWrite.replace(/\/[^/]*$/, "") || lastWrite;
+  return selected.value?.cwd || "";
+});
+const git = computed(() => gitTarget.value ? state.gitInfoByCwd[gitTarget.value] : null);
+const gitSummary = computed(() => {
+  if (!selected.value) return "—";
+  if (state.gitInfoLoading[gitTarget.value]) return "loading…";
+  if (!git.value?.is_git_repo) return git.value?.error || "not a git repo";
+  const status = git.value.status;
+  const diff = git.value.diff;
+  const parts = [];
+  if (status?.changed) parts.push(`${status.changed} changed`);
+  if (status?.untracked) parts.push(`${status.untracked} untracked`);
+  if (diff?.insertions || diff?.deletions) parts.push(`+${diff.insertions}/-${diff.deletions}`);
+  if (git.value.upstream?.has_upstream && (git.value.upstream.ahead || git.value.upstream.behind)) parts.push(`↑${git.value.upstream.ahead} ↓${git.value.upstream.behind}`);
+  return parts.length ? parts.join(" · ") : "clean";
+});
+const gitGenerated = computed(() => git.value?.generated_at ? relativeTime(git.value.generated_at) : "");
 const transcriptSummary = computed(() => {
   const raw = state.rawEvents;
   if (!raw) return "Loading raw transcript…";
@@ -40,7 +60,7 @@ function queueChat() {
       <aside class="console-card detail-card">
         <div class="console-head"><span>focus</span><div class="focus-title"><h2>{{ name }}</h2><button class="rename-chip" type="button" @click="monitor.openModal('rename', selected.session_id)">rename</button></div></div>
         <dl class="detail-list">
-          <div><dt>Name</dt><dd>{{ name }}</dd></div><div><dt>Path</dt><dd>{{ selected.cwd }}</dd></div><div><dt>Session</dt><dd><code>{{ selected.session_id }}</code></dd></div><div><dt>Activity</dt><dd>{{ selected.activity }} {{ selected.is_active ? '· active' : '· inactive' }}</dd></div><div><dt>Current</dt><dd>{{ state.selectedDetail?.current_tool || '—' }}</dd></div><div><dt>Last write</dt><dd>{{ state.selectedDetail?.last_file_write || '—' }}</dd></div><div><dt>Branch</dt><dd>{{ selected.git_branch || '—' }}</dd></div><div><dt>Resume</dt><dd><code v-if="state.selectedDetail?.resume_command">{{ state.selectedDetail.resume_command }}</code><template v-else>—</template></dd></div>
+          <div><dt>Name</dt><dd>{{ name }}</dd></div><div><dt>Agent CWD</dt><dd>{{ selected.cwd }}</dd></div><div><dt>Session</dt><dd><code>{{ selected.session_id }}</code></dd></div><div><dt>Activity</dt><dd>{{ selected.activity }} {{ selected.is_active ? '· active' : '· inactive' }}</dd></div><div><dt>Current</dt><dd>{{ state.selectedDetail?.current_tool || '—' }}</dd></div><div><dt>Last write</dt><dd>{{ state.selectedDetail?.last_file_write || '—' }}</dd></div><div><dt>Branch</dt><dd>{{ git?.branch || selected.git_branch || '—' }}</dd></div><div><dt>Worktree</dt><dd><code v-if="git?.worktree">{{ git.worktree }}</code><template v-else>—</template></dd></div><div><dt>Main repo</dt><dd><code v-if="git?.main_worktree">{{ git.main_worktree }}</code><template v-else>—</template></dd></div><div><dt>Git diff</dt><dd><span>{{ gitSummary }}</span><small v-if="gitGenerated"> · checked {{ gitGenerated }}{{ git?.cached ? ' (cached)' : '' }}</small></dd></div><div><dt>Resume</dt><dd><code v-if="state.selectedDetail?.resume_command">{{ state.selectedDetail.resume_command }}</code><template v-else>—</template></dd></div>
         </dl>
         <p v-if="!state.selectedDetail" class="empty loading">Loading detail…</p>
       </aside>

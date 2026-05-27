@@ -90,9 +90,10 @@ The backend uses environment variables for local paths and limits:
 | `EXTENSION_PORT` | `5174` | Backend port |
 | `PI_SESSIONS_DIR` | `~/.pi/agent/sessions` | Root directory for pi JSONL sessions |
 | `SESSION_NAMES_FILE` | `~/.pi/lazyagent-extension/session-names.json` | Local session alias store |
+| `DASHBOARD_SYSTEM_PROMPT_FILE` | `~/.pi/lazyagent-extension/system-prompt.md` | Editable Dashboard System Prompt storage used by the skills + extensions page |
 | `WIDGETS_DIR` | `./widgets` | Widget folders to load, separated by the platform path delimiter |
 | `WIDGET_STATE_DIR` | `~/.pi/lazyagent-extension/widgets` | Local Widget state directory |
-| `AGENT_APPEND_SYSTEM_PROMPT` | empty | Extra global system prompt appended to `pi -p` runs launched from the dashboard; Widget-specific prompt guidance is provided by loaded Widgets |
+| `AGENT_APPEND_SYSTEM_PROMPT` | empty | Extra env-provided system prompt appended to `pi -p` runs launched from the dashboard before the editable dashboard prompt and Widget prompts |
 | `LAZYAGENT_URL` | `http://127.0.0.1:7421` | Upstream lazyagent API for the authenticated `/lazyagent` proxy |
 | `DASHBOARD_PASSWORD_HASH` | empty | Enables dashboard login when set with `DASHBOARD_AUTH_SECRET`; generate with `node scripts/hash-password.js 'password'` |
 | `DASHBOARD_AUTH_SECRET` | empty | Random HMAC secret for signed device cookies; generate with `openssl rand -base64 48` |

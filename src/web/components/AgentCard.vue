@@ -11,6 +11,22 @@ const name = computed(() => displaySessionName(props.session, state.sessionNames
 const work = computed(() => currentWork(props.session, detail.value));
 const tools = computed(() => state.cardTools[props.session.session_id] || []);
 const queuedCount = computed(() => state.messageQueue.filter(message => message.session_id === props.session.session_id).length);
+const gitTarget = computed(() => {
+  const lastWrite = props.session.session_id === state.selectedId ? (state.selectedDetail?.last_file_write || "") : "";
+  if (lastWrite.startsWith("/")) return lastWrite.replace(/\/[^/]*$/, "") || lastWrite;
+  return props.session.cwd;
+});
+const git = computed(() => state.gitInfoByCwd[gitTarget.value]);
+const gitBrief = computed(() => {
+  if (state.gitInfoLoading[gitTarget.value]) return "git loading…";
+  if (!git.value?.is_git_repo) return props.session.git_branch ? `git ${props.session.git_branch}` : "";
+  const changed = git.value.status?.changed || 0;
+  const diff = git.value.diff;
+  const branch = git.value.branch || props.session.git_branch || "detached";
+  const churn = diff && (diff.insertions || diff.deletions) ? ` +${diff.insertions}/-${diff.deletions}` : "";
+  const dirty = changed ? ` · ${changed}Δ${churn}` : " · clean";
+  return `${branch}${git.value.is_worktree ? " · worktree" : ""}${dirty}`;
+});
 function height(name: string, i: number) { return `${18 + ((name.length * 5 + i * 7) % 24)}px`; }
 </script>
 
@@ -22,6 +38,7 @@ function height(name: string, i: number) { return `${18 + ((name.length * 5 + i 
       <div class="status-stack"><button class="rename-chip" type="button" @click.stop="monitor.openModal('rename', session.session_id)">rename</button><span v-if="queuedCount" class="queue-badge">{{ queuedCount }} queued</span><span class="state-badge">{{ statusLabel(session) }}</span><span class="model-tag">{{ session.model || 'model ?' }}</span></div>
     </header>
     <p class="path-line">{{ compactPath(session.cwd) }} · {{ shortId(session.session_id) }}</p>
+    <p v-if="gitBrief" class="git-line">{{ gitBrief }}</p>
     <div class="current-work"><div><span>{{ work.label }}</span><strong>{{ work.text }}</strong></div><time>{{ relativeTime(session.last_activity) }}</time></div>
     <div class="tool-spark"><div class="spark-head"><span>last {{ tools.length }} tool calls</span><span>now →</span></div><div class="bars"><span v-if="!tools.length" class="spark-empty">loading…</span><i v-for="(tool, i) in tools" :key="`${tool.name}-${i}`" class="bar" :class="toolClass(tool.name)" :style="{ height: height(tool.name, i) }" :data-tooltip="tool.detail" :aria-label="tool.detail"></i></div></div>
     <dl class="card-metrics">
