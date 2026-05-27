@@ -10,15 +10,16 @@ const detail = computed(() => props.session.session_id === state.selectedId ? st
 const name = computed(() => displaySessionName(props.session, state.sessionNames));
 const work = computed(() => currentWork(props.session, detail.value));
 const tools = computed(() => state.cardTools[props.session.session_id] || []);
+const queuedCount = computed(() => state.messageQueue.filter(message => message.session_id === props.session.session_id).length);
 function height(name: string, i: number) { return `${18 + ((name.length * 5 + i * 7) % 24)}px`; }
 </script>
 
 <template>
-  <article class="agent-card" :class="[sessionTone(session), { selected: session.session_id === state.selectedId, 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id) }]" tabindex="0" role="button" :aria-label="`Open ${name} detail`" @click="monitor.selectSession(session.session_id)">
+  <article class="agent-card" :class="[sessionTone(session), { selected: session.session_id === state.selectedId, 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id), queued: queuedCount > 0 }]" tabindex="0" role="button" :aria-label="`Open ${name} detail`" @click="monitor.selectSession(session.session_id)">
     <button class="card-hit" type="button" :aria-label="`Select ${name}`"></button>
     <header class="card-head">
       <div class="agent-title"><span class="agent-dot"></span><h3>{{ name }}</h3></div>
-      <div class="status-stack"><button class="rename-chip" type="button" @click.stop="monitor.openModal('rename', session.session_id)">rename</button><span class="state-badge">{{ statusLabel(session) }}</span><span class="model-tag">{{ session.model || 'model ?' }}</span></div>
+      <div class="status-stack"><button class="rename-chip" type="button" @click.stop="monitor.openModal('rename', session.session_id)">rename</button><span v-if="queuedCount" class="queue-badge">{{ queuedCount }} queued</span><span class="state-badge">{{ statusLabel(session) }}</span><span class="model-tag">{{ session.model || 'model ?' }}</span></div>
     </header>
     <p class="path-line">{{ compactPath(session.cwd) }} · {{ shortId(session.session_id) }}</p>
     <div class="current-work"><div><span>{{ work.label }}</span><strong>{{ work.text }}</strong></div><time>{{ relativeTime(session.last_activity) }}</time></div>

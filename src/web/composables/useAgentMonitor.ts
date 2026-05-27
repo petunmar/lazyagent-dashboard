@@ -1,5 +1,5 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchSessionEvents, fetchSessionNames, fetchSpend, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
+import { fetchAgentRuns, fetchDirectory, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, submitAgent } from "../api";
 import type { AgentRun, DirectoryPickerState, EventsUpdate, ModalType, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
@@ -141,8 +141,8 @@ export function useAgentMonitor() {
   async function refresh(): Promise<void> {
     if (!client) return;
     try {
-      const [stats, sessions] = await Promise.all([client.stats(), client.sessions(), loadSessionNames()]);
-      state.stats = stats;
+      const [stats, sessions] = await Promise.all([client.stats(), loadSessions(), loadSessionNames()]);
+      state.stats = { ...stats, total_sessions: Math.max(stats.total_sessions, sessions.length) };
       state.sessions = sortSessions(sessions);
       const previous = state.selectedId;
       state.selectedId ||= state.sessions[0]?.session_id || "";
@@ -202,7 +202,15 @@ export function useAgentMonitor() {
       const detail = await client.session(id);
       if (state.selectedId === id) state.selectedDetail = detail;
     } catch (error) {
-      if (state.selectedId === id) state.error = error instanceof Error ? error.message : String(error);
+      try {
+        const detail = await fetchSessionSummary(id);
+        if (state.selectedId === id) {
+          state.selectedDetail = detail;
+          state.error = "";
+        }
+      } catch {
+        if (state.selectedId === id) state.error = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -253,6 +261,19 @@ export function useAgentMonitor() {
 
   async function loadSessionNames(): Promise<void> {
     try { state.sessionNames = await fetchSessionNames(); } catch { /* optional sugar */ }
+  }
+
+  async function loadSessions(): Promise<SessionItem[]> {
+    if (!client) return [];
+    const [active, recent] = await Promise.all([client.sessions(), fetchRecentSessions(12)]);
+    return mergeSessions(active, recent);
+  }
+
+  function mergeSessions(active: SessionItem[], recent: SessionItem[]): SessionItem[] {
+    const byId = new Map<string, SessionItem>();
+    for (const session of recent) byId.set(session.session_id, session);
+    for (const session of active) byId.set(session.session_id, session);
+    return [...byId.values()];
   }
 
   async function loadSpend(): Promise<void> {
@@ -472,7 +493,11 @@ export function useAgentMonitor() {
     events.addEventListener("update", event => {
       const update = JSON.parse((event as MessageEvent).data) as EventsUpdate;
       state.stats = update.stats;
-      state.sessions = sortSessions(update.sessions);
+      state.sessions = sortSessions(mergeSessions(update.sessions, state.sessions));
+      void loadSessions().then(sessions => {
+        state.sessions = sortSessions(sessions);
+        if (state.stats) state.stats = { ...state.stats, total_sessions: Math.max(state.stats.total_sessions, sessions.length) };
+      }).catch(() => {});
       state.selectedId ||= state.sessions[0]?.session_id || "";
       state.status = `live · ${new Date().toLocaleTimeString()}`;
       void loadSessionNames();

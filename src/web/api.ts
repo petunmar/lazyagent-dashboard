@@ -50,6 +50,18 @@ export async function fetchSessionEvents(id: string, limit: number): Promise<Raw
   return res.json();
 }
 
+export async function fetchRecentSessions(hours = 12): Promise<SessionItem[]> {
+  const res = await fetch(`${extensionApiBase()}/api/recent-sessions?hours=${hours}`);
+  if (!res.ok) return [];
+  return ((await res.json()) as { sessions: SessionItem[] }).sessions || [];
+}
+
+export async function fetchSessionSummary(id: string): Promise<SessionDetail> {
+  const res = await fetch(`${extensionApiBase()}/api/session-summary/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`session summary failed: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 export async function fetchDirectory(path: string): Promise<DirectoryListing> {
   const res = await fetch(`${extensionApiBase()}/api/directories?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(await res.text());

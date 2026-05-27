@@ -107,6 +107,18 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/recent-sessions") {
+      const hours = parseHours(url.searchParams.get("hours"), 12);
+      writeJson(res, 200, { sessions: await recentLocalSessions(hours), hours });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/session-summary/")) {
+      const id = decodeURIComponent(url.pathname.slice("/api/session-summary/".length));
+      writeJson(res, 200, await localSessionDetail(id));
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/directories") {
       const payload = await listDirectories(url.searchParams.get("path"));
       writeJson(res, 200, payload);
@@ -575,6 +587,12 @@ function parseLimit(value) {
   return Math.min(Math.max(Math.floor(parsed), 1), 5000);
 }
 
+function parseHours(value, fallback) {
+  const parsed = Number(value || fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.floor(parsed), 1), 72);
+}
+
 async function findSessionFile(sessionId) {
   const projects = await readdir(piSessionsDir, { withFileTypes: true }).catch(() => []);
   for (const project of projects) {
@@ -602,6 +620,83 @@ async function listSessionFiles() {
     }
   }
   return files;
+}
+
+async function recentLocalSessions(hours = 12) {
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  const summaries = [];
+  for (const file of await listSessionFiles()) {
+    const info = await stat(file).catch(() => null);
+    if (!info || info.mtimeMs < cutoff) continue;
+    const summary = await summarizeLocalSessionFile(file, info);
+    if (Date.parse(summary.last_activity) >= cutoff) summaries.push(summary);
+  }
+  summaries.sort((a, b) => Date.parse(b.last_activity) - Date.parse(a.last_activity));
+  return summaries;
+}
+
+async function localSessionDetail(sessionId) {
+  if (!/^[A-Za-z0-9_.:T-]+$/.test(sessionId)) throw httpError(400, "invalid session id");
+  const file = await findSessionFile(sessionId);
+  const info = await stat(file).catch(() => null);
+  return summarizeLocalSessionFile(file, info, true);
+}
+
+async function summarizeLocalSessionFile(file, info, detail = false) {
+  const sessionId = path.basename(file, ".jsonl");
+  const parsed = parseJsonl(await readFile(file, "utf8").catch(() => ""), file);
+  const sessionEvent = parsed.events.find(event => event.kind === "session");
+  const cwd = sessionEvent?.cwd || decodeSessionDirName(path.basename(path.dirname(file)));
+  const timestamps = parsed.events.map(event => Date.parse(event.timestamp || "")).filter(Number.isFinite);
+  const lastActivity = new Date(timestamps.length ? Math.max(...timestamps) : (info?.mtimeMs || Date.now())).toISOString();
+  const userMessages = parsed.events.filter(event => event.kind === "user").length;
+  const assistantMessages = parsed.events.filter(event => event.kind === "assistant").length;
+  const recentTools = parsed.events
+    .filter(event => event.kind === "tool_call" && event.name)
+    .slice(-12)
+    .map(event => ({ name: event.name, timestamp: event.timestamp }));
+  const recentMessages = parsed.events
+    .filter(event => (event.kind === "user" || event.kind === "assistant") && event.text)
+    .slice(-8)
+    .map(event => ({ role: event.kind, text: event.text, timestamp: event.timestamp }));
+  const base = {
+    session_id: sessionId,
+    source: "pi-session-log",
+    cwd,
+    short_name: path.basename(cwd) || sessionId.slice(0, 8),
+    activity: "archived · idle",
+    is_active: false,
+    model: [...parsed.events].reverse().find(event => event.kind === "model")?.model || "",
+    git_branch: "",
+    cost_usd: 0,
+    last_activity: lastActivity,
+    total_messages: userMessages + assistantMessages,
+  };
+  if (!detail) return base;
+  const lastTool = [...recentTools].reverse()[0];
+  return {
+    ...base,
+    version: sessionEvent?.version || "",
+    is_worktree: false,
+    main_repo: "",
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    user_messages: userMessages,
+    assistant_messages: assistantMessages,
+    current_tool: lastTool?.name || "",
+    last_file_write: "",
+    last_file_write_at: "",
+    recent_tools: recentTools,
+    recent_messages: recentMessages,
+    resume_command: `pi -p --session ${file}`,
+  };
+}
+
+function decodeSessionDirName(name) {
+  if (!name.startsWith("--") || !name.endsWith("--")) return path.join(piSessionsDir, name);
+  return `/${name.slice(2, -2).replaceAll("-", "/")}`;
 }
 
 async function spendSummary(days = 14) {

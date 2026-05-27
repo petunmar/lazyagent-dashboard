@@ -38,7 +38,7 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
 
   <section v-if="lowFocusSessions.length" class="low-focus-panel console-card" aria-label="Inactive recent sessions">
     <div class="console-head"><span>recent idle</span><h2>Quiet sessions</h2></div>
-    <p class="low-focus-note">Idle for {{ lowFocusAfterMinutes }}+ minutes. Lazyagent will remove these from this view after its 30 minute window.</p>
+    <p class="low-focus-note">Idle for {{ lowFocusAfterMinutes }}+ minutes. Includes archived agents from local Pi session logs for the past 12 hours.</p>
     <div class="low-focus-list">
       <article v-for="session in lowFocusSessions" :key="session.session_id" class="low-focus-row" :class="{ 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id) }" tabindex="0" role="button" @click="monitor.selectSession(session.session_id)">
         <div><strong>{{ session.short_name }}</strong><span>{{ session.cwd }} · {{ session.session_id.replaceAll('-', '').slice(0, 8) }}</span></div>
