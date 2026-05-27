@@ -136,7 +136,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now lazyagent-api lazyagent-dashboard
 ```
 
-Both services start on boot and use `RuntimeMaxSec=3h` with `Restart=always`, which gives them a clean restart every three hours.
+Both services start on boot with `Restart=always`. The dashboard unit intentionally avoids periodic restarts and uses `KillMode=process` so dashboard-launched `pi` agents, installs, and test runs can continue across dashboard deploys/restarts.
 
 4. Put HTTPS in front of the dashboard only. Use `deploy/nginx-lazyagent-dashboard.conf.example` as the nginx site template, replace the domain and certificate paths, then reload nginx.
 

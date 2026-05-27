@@ -12,8 +12,9 @@ EnvironmentFile=/etc/lazyagent-api.env
 ExecStart=/usr/bin/env lazyagent --api --agent pi --host 127.0.0.1:7421
 Restart=always
 RestartSec=10
-# Lazyagent intentionally gets a clean process every 3 hours.
-RuntimeMaxSec=3h
+# Keep the API stable while dashboard-launched agents run. If this service ever owns
+# child agents, KillMode=process prevents restarts from killing their tool subprocesses.
+KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=30
 NoNewPrivileges=true

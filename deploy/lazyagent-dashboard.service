@@ -13,8 +13,10 @@ ExecStartPre=/usr/bin/env npm run build
 ExecStart=/usr/bin/env npm run start
 Restart=always
 RestartSec=10
-# Restart periodically so the dashboard process and proxied sessions stay fresh.
-RuntimeMaxSec=3h
+# Do not set RuntimeMaxSec here: dashboard-launched agents can run for hours.
+# Kill only the dashboard process on deploy/restart; pi agents and their tool subprocesses
+# must survive so long-running installs/tests do not get stranded mid-tool-call.
+KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=30
 NoNewPrivileges=true
