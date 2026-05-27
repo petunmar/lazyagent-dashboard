@@ -269,14 +269,25 @@ function pointerToTarget(event) {
   player.target = clamp(y, player.h / 2 + 14, H - player.h / 2 - 14);
 }
 
+function isControlKey(key) {
+  return key === " " || key === "arrowup" || key === "arrowdown" || key === "w" || key === "s";
+}
+
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
+  if (isControlKey(key)) event.preventDefault();
   keys.add(key);
-  if (key === " ") { event.preventDefault(); serve(); }
-});
-window.addEventListener("keyup", event => keys.delete(event.key.toLowerCase()));
+  if (key === " ") serve();
+}, { passive: false });
+window.addEventListener("keyup", event => {
+  const key = event.key.toLowerCase();
+  if (isControlKey(key)) event.preventDefault();
+  keys.delete(key);
+}, { passive: false });
+canvas.addEventListener("wheel", event => event.preventDefault(), { passive: false });
+canvas.addEventListener("touchmove", event => event.preventDefault(), { passive: false });
 canvas.addEventListener("pointermove", pointerToTarget);
-canvas.addEventListener("pointerdown", event => { pointerToTarget(event); serve(); });
+canvas.addEventListener("pointerdown", event => { canvas.focus({ preventScroll: true }); pointerToTarget(event); serve(); });
 curtain.addEventListener("click", serve);
 serveButton.addEventListener("click", serve);
 modeButton.addEventListener("click", () => {

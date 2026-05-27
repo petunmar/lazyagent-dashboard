@@ -5,7 +5,7 @@
   color: #f8fafc;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: transparent; overflow: hidden; }
+html, body { margin: 0; background: transparent; overflow: hidden; overscroll-behavior: contain; }
 .court-shell {
   position: relative;
   overflow: hidden;
@@ -44,7 +44,7 @@ h1 { margin: 0; font-size: 1.08rem; letter-spacing: -0.03em; }
 .scoreboard strong { color: #fff; }
 .rally { color: #99f6e4 !important; }
 .court-wrap { position: relative; z-index: 2; border-radius: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); background: #064e3b; }
-canvas { display: block; width: 100%; height: min(42vw, 330px); min-height: 230px; cursor: crosshair; touch-action: none; }
+canvas { display: block; width: 100%; height: min(42vw, 330px); min-height: 230px; cursor: crosshair; touch-action: none; outline: none; }
 .curtain {
   position: absolute;
   inset: 0;
