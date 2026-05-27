@@ -30,10 +30,11 @@ let botScore = 0;
 let rally = 0;
 let shake = 0;
 let cometHue = 80;
-let agentActive = true;
+let agentActive = false;
 let agentLastActivity = Date.now();
 let restTimer = 0;
 let resting = false;
+let hasPlayed = false;
 
 const player = { x: 52, y: H / 2 - 42, w: 14, h: 84, targetX: 52, targetY: H / 2, speed: 520, footwork: 430, lastX: 52, lastY: H / 2 - 42, vx: 0, vy: 0 };
 const bot = { x: W - 66, y: H / 2 - 42, w: 14, h: 84, targetX: W - 66, targetY: H / 2, speed: 390, footwork: 360, nerve: 0.78, lastX: W - 66, lastY: H / 2 - 42, vx: 0, vy: 0 };
@@ -46,8 +47,8 @@ function postHeight() {
   parent.postMessage({
     type: "lazyagent-widget-height",
     widget: "court-break",
-    slot: params.get("slot") || "dashboard:top",
-    height: Math.ceil(document.documentElement.scrollHeight)
+    slot: params.get("slot") || "detail:top",
+    height: hasPlayed ? Math.ceil(document.documentElement.scrollHeight) : 0
   }, "*");
 }
 
@@ -283,6 +284,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 function updateRestState(dt) {
+  if (!hasPlayed) return;
   const inactiveFor = agentActive ? 0 : Math.max(0, Date.now() - agentLastActivity);
   restTimer = inactiveFor >= 10_000 ? restTimer + dt : 0;
   const shouldRest = restTimer > 0;
@@ -325,6 +327,11 @@ function onSessionState(message) {
   const parsedLastActivity = Date.parse(message.last_activity || "");
   agentLastActivity = Number.isFinite(parsedLastActivity) ? parsedLastActivity : Date.now();
   if (agentActive) {
+    if (!hasPlayed) {
+      hasPlayed = true;
+      document.body.classList.add("has-played");
+      requestAnimationFrame(postHeight);
+    }
     restTimer = 0;
     if (resting) {
       resting = false;
@@ -332,6 +339,8 @@ function onSessionState(message) {
       restReminder?.setAttribute("aria-hidden", "true");
       commentaryEl.textContent = "Agent is moving again. Ball is live.";
     }
+  } else if (hasPlayed) {
+    requestAnimationFrame(postHeight);
   }
 }
 
