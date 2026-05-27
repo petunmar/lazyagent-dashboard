@@ -892,25 +892,43 @@ function decodeSessionDirName(name) {
 
 async function spendSummary(days = 14) {
   const keys = recentLocalDateKeys(days);
-  const byDate = Object.fromEntries(keys.map(date => [date, 0]));
+  const byDate = Object.fromEntries(keys.map(date => [date, { cost_usd: 0, tokens: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }]));
   const wanted = new Set(keys);
   for (const file of await listSessionFiles()) {
     const lines = (await readFile(file, "utf8").catch(() => "")).split(/\r?\n/).filter(Boolean);
     for (const line of lines) {
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
-      const cost = usageCost(entry?.message?.usage ?? entry?.usage);
-      if (!cost) continue;
+      const usage = entry?.message?.usage ?? entry?.usage;
+      const cost = usageCost(usage);
+      const tokens = usageTokens(usage);
+      if (!cost && !tokens.total) continue;
       const date = localDateKey(entry.timestamp || entry.message?.timestamp);
-      if (wanted.has(date)) byDate[date] += cost;
+      if (!wanted.has(date)) continue;
+      byDate[date].cost_usd += cost;
+      byDate[date].tokens += tokens.total;
+      byDate[date].input_tokens += tokens.input;
+      byDate[date].output_tokens += tokens.output;
+      byDate[date].cache_read_tokens += tokens.cacheRead;
+      byDate[date].cache_write_tokens += tokens.cacheWrite;
     }
   }
-  const daily = keys.map(date => ({ date, cost_usd: roundMoney(byDate[date]) }));
+  const daily = keys.map(date => ({
+    date,
+    cost_usd: roundMoney(byDate[date].cost_usd),
+    tokens: byDate[date].tokens,
+    input_tokens: byDate[date].input_tokens,
+    output_tokens: byDate[date].output_tokens,
+    cache_read_tokens: byDate[date].cache_read_tokens,
+    cache_write_tokens: byDate[date].cache_write_tokens,
+  }));
+  const today = daily[daily.length - 1];
   return {
     generated_at: new Date().toISOString(),
     days,
     today: keys[keys.length - 1],
-    today_usd: daily[daily.length - 1]?.cost_usd || 0,
+    today_usd: today?.cost_usd || 0,
+    today_tokens: today?.tokens || 0,
     daily,
   };
 }
@@ -921,6 +939,21 @@ function usageCost(usage) {
   const value = typeof cost === "number" ? cost : cost?.total ?? usage.cost_usd ?? usage.costUsd;
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function usageTokens(usage) {
+  if (!usage || typeof usage !== "object") return { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const input = positiveInteger(usage.input ?? usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens);
+  const output = positiveInteger(usage.output ?? usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens);
+  const cacheRead = positiveInteger(usage.cacheRead ?? usage.cache_read ?? usage.cache_read_tokens ?? usage.cacheReadTokens);
+  const cacheWrite = positiveInteger(usage.cacheWrite ?? usage.cache_write ?? usage.cache_creation_tokens ?? usage.cacheWriteTokens ?? usage.cacheCreationTokens);
+  const total = positiveInteger(usage.totalTokens ?? usage.total_tokens ?? usage.total) || input + output + cacheRead + cacheWrite;
+  return { total, input, output, cacheRead, cacheWrite };
+}
+
+function positiveInteger(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
 }
 
 function recentLocalDateKeys(days) {

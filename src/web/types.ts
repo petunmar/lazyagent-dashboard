@@ -100,8 +100,8 @@ export type SessionDetail = SessionItem & {
 };
 
 export type Stats = { total_sessions: number; active_sessions: number; window_minutes: number };
-export type SpendDay = { date: string; cost_usd: number };
-export type SpendSummary = { generated_at: string; days: number; today: string; today_usd: number; daily: SpendDay[] };
+export type SpendDay = { date: string; cost_usd: number; tokens: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number };
+export type SpendSummary = { generated_at: string; days: number; today: string; today_usd: number; today_tokens: number; daily: SpendDay[] };
 
 export type SessionEvent = {
   kind: string;

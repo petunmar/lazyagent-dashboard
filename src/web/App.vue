@@ -12,8 +12,9 @@ const { state } = monitor;
 const summary = computed(() => summarizeSessions(state.sessions));
 const now = computed(() => new Date());
 const subtitle = computed(() => state.view === "detail" ? "session detail" : state.view === "pi-resources" ? "skills + extensions" : "multi-agent dashboard");
-const totalTokens = computed(() => state.selectedDetail ? state.selectedDetail.input_tokens + state.selectedDetail.output_tokens : 0);
+const totalTokens = computed(() => state.spend?.today_tokens ?? 0);
 const totalCost = computed(() => state.spend?.today_usd ?? 0);
+const maxDailyTokens = computed(() => Math.max(...(state.spend?.daily.map(day => day.tokens) || [0]), 1));
 const maxDailySpend = computed(() => Math.max(...(state.spend?.daily.map(day => day.cost_usd) || [0]), 0.001));
 const spendBars = computed(() => (state.spend?.daily || []).map(day => {
   const label = new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -22,6 +23,16 @@ const spendBars = computed(() => (state.spend?.daily || []).map(day => {
     label,
     tooltip: `${label}: ${formatMoney(day.cost_usd)}`,
     height: `${Math.max(10, (day.cost_usd / maxDailySpend.value) * 42)}px`,
+  };
+}));
+const tokenBars = computed(() => (state.spend?.daily || []).map(day => {
+  const label = new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const cache = day.cache_read_tokens + day.cache_write_tokens;
+  return {
+    ...day,
+    label,
+    tooltip: `${label}: ${formatCompact(day.tokens)} tokens · ${formatCompact(day.input_tokens)} in / ${formatCompact(day.output_tokens)} out${cache ? ` · ${formatCompact(cache)} cache` : ""}`,
+    height: `${Math.max(10, (day.tokens / maxDailyTokens.value) * 42)}px`,
   };
 }));
 const spendUpdated = computed(() => state.spend ? new Date(state.spend.generated_at).toLocaleTimeString() : "");
@@ -48,12 +59,21 @@ onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate)
         <div class="accent"><dt>{{ summary.working }}</dt><dd>working</dd></div>
         <div><dt>{{ summary.idle }}</dt><dd>idle</dd></div>
         <div class="danger"><dt>{{ summary.errored }}</dt><dd>errored</dd></div>
-        <div><dt>{{ formatCompact(totalTokens) }}</dt><dd>tokens</dd></div>
-        <div class="money spend-stat" tabindex="0">
+        <div class="trend-stat" tabindex="0">
+          <dt>{{ formatCompact(totalTokens) }}</dt><dd>today tokens</dd>
+          <div class="trend-popover" role="tooltip">
+            <div class="trend-popover-head"><strong>token usage</strong><span>past 14 days</span></div>
+            <div class="bars trend-bars" aria-label="Tokens over past 14 days">
+              <i v-for="day in tokenBars" :key="day.date" class="bar token-bar" :style="{ height: day.height }" :data-tooltip="day.tooltip" :aria-label="day.tooltip" tabindex="0"></i>
+            </div>
+            <p>summed from Pi transcript usage tokens{{ spendUpdated ? ` · updated ${spendUpdated}` : '' }}</p>
+          </div>
+        </div>
+        <div class="money trend-stat" tabindex="0">
           <dt>{{ formatMoney(totalCost) }}</dt><dd>today</dd>
-          <div class="spend-popover" role="tooltip">
-            <div class="spend-popover-head"><strong>real spend</strong><span>past 14 days</span></div>
-            <div class="bars spend-bars" aria-label="Spend over past 14 days">
+          <div class="trend-popover" role="tooltip">
+            <div class="trend-popover-head"><strong>real spend</strong><span>past 14 days</span></div>
+            <div class="bars trend-bars" aria-label="Spend over past 14 days">
               <i v-for="day in spendBars" :key="day.date" class="bar spend-bar" :style="{ height: day.height }" :data-tooltip="day.tooltip" :aria-label="day.tooltip" tabindex="0"></i>
             </div>
             <p>summed from Pi transcript usage costs{{ spendUpdated ? ` · updated ${spendUpdated}` : '' }}</p>

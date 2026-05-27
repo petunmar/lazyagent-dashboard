@@ -113,9 +113,9 @@ code { color: var(--lime); overflow-wrap: anywhere; }
 .hero-stats .accent dt, .hero-stats .money dt { color: var(--lime); }
 .hero-stats .danger dt { color: var(--orange); }
 .hero-stats .money { border-left: 1px solid var(--line); padding-left: 30px; min-width: 132px; }
-.spend-stat { position: relative; outline: none; }
-.spend-stat dt { cursor: default; }
-.spend-popover {
+.trend-stat { position: relative; outline: none; }
+.trend-stat dt { cursor: default; }
+.trend-popover {
   position: absolute;
   top: calc(100% + 16px);
   right: 0;
@@ -131,8 +131,8 @@ code { color: var(--lime); overflow-wrap: anywhere; }
   pointer-events: none;
   transition: opacity .14s ease, transform .14s ease;
 }
-.spend-stat:hover .spend-popover, .spend-stat:focus-within .spend-popover { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.spend-popover::before {
+.trend-stat:hover .trend-popover, .trend-stat:focus-within .trend-popover { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.trend-popover::before {
   content: "";
   position: absolute;
   top: -7px;
@@ -144,12 +144,13 @@ code { color: var(--lime); overflow-wrap: anywhere; }
   background: #08150f;
   transform: rotate(45deg);
 }
-.spend-popover-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.spend-popover-head strong { color: var(--cream); font-size: 12px; text-transform: uppercase; letter-spacing: .14em; }
-.spend-popover-head span, .spend-popover p { color: var(--muted); font: 700 10px/1.35 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
-.spend-popover p { margin: 10px 0 0; text-align: left; text-transform: none; letter-spacing: 0; }
-.spend-bars { grid-template-columns: repeat(14, 1fr); gap: 6px; height: 42px; }
+.trend-popover-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.trend-popover-head strong { color: var(--cream); font-size: 12px; text-transform: uppercase; letter-spacing: .14em; }
+.trend-popover-head span, .trend-popover p { color: var(--muted); font: 700 10px/1.35 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
+.trend-popover p { margin: 10px 0 0; text-align: left; text-transform: none; letter-spacing: 0; }
+.trend-bars { grid-template-columns: repeat(14, 1fr); gap: 6px; height: 42px; }
 .spend-bar { background: linear-gradient(180deg, var(--lime), var(--green)); }
+.token-bar { background: linear-gradient(180deg, #9ee7ff, #3b82f6); }
 
 .live-clock {
   display: grid;
