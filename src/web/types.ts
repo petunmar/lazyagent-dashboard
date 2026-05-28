@@ -25,6 +25,14 @@ export type SavedAttachment = {
   path: string;
 };
 
+export type SharedDocument = {
+  name: string;
+  url: string;
+  size: number;
+  modified_at: string;
+  type: string;
+};
+
 export type PiResource = {
   key: string;
   kind: "skill" | "extension";

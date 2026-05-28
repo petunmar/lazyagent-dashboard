@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PendingAttachment, PiResourcesPayload, RawSessionEvents, SavedAttachment, SessionDetail, SessionItem, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PendingAttachment, PiResourcesPayload, RawSessionEvents, SavedAttachment, SessionDetail, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -66,6 +66,16 @@ export async function fetchDirectory(path: string): Promise<DirectoryListing> {
   const res = await fetch(`${extensionApiBase()}/api/directories?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function fetchSharedDocuments(): Promise<SharedDocument[]> {
+  const res = await fetch(`${extensionApiBase()}/api/shared-documents`);
+  if (!res.ok) throw new Error(await res.text());
+  return ((await res.json()) as { documents: SharedDocument[] }).documents || [];
+}
+
+export function sharedDocumentUrl(document: SharedDocument): string {
+  return `${extensionApiBase()}${document.url}`;
 }
 
 export async function fetchSessionNames(): Promise<Record<string, string>> {

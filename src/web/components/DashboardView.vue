@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AgentCard from "./AgentCard.vue";
+import SharedDocumentsPanel from "./SharedDocumentsPanel.vue";
 import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import type { SessionFilter } from "../types";
@@ -32,6 +33,8 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
   <section v-if="topWidgets.length" class="widget-strip" aria-label="Dashboard widgets">
     <WidgetFrame v-for="widget in topWidgets" :key="widget.id" :widget="widget" slot-name="dashboard:top" :monitor="monitor" />
   </section>
+
+  <SharedDocumentsPanel :monitor="monitor" />
 
   <section class="agent-grid">
     <AgentCard v-for="session in focusSessions" :key="session.session_id" :session="session" :monitor="monitor" />

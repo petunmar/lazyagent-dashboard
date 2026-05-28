@@ -284,6 +284,56 @@ button.ghost { border-color: var(--line); color: var(--muted); }
   background: transparent;
   display: block;
 }
+.shared-documents {
+  margin-bottom: 18px;
+}
+.shared-document-list {
+  display: grid;
+  gap: 10px;
+}
+.shared-document-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: rgba(231, 255, 88, .035);
+  padding: 13px 14px;
+}
+.shared-document-row strong {
+  display: block;
+  color: var(--cream);
+  overflow-wrap: anywhere;
+}
+.shared-document-row span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font: 700 12px/1.35 "JetBrains Mono", monospace;
+}
+.shared-document-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.doc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--lime);
+  border-radius: 999px;
+  background: var(--lime);
+  color: #07100b;
+  padding: 9px 14px;
+  font-weight: 900;
+  text-decoration: none;
+  text-transform: lowercase;
+}
+.doc-button.secondary {
+  background: transparent;
+  color: var(--lime);
+}
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -844,8 +894,8 @@ button.ghost { border-color: var(--line); color: var(--muted); }
   .hero-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
   .hero-stats .money { border-left: 0; padding-left: 0; }
   .dashboard-controls { display: grid; grid-template-columns: 1fr; }
-  .connect-form, .agent-grid, .command-console, .detail-layout, .agent-form, .agent-options, .mini-cards, .modal-card .agent-options, .low-focus-row { grid-template-columns: 1fr; }
-  .low-focus-meta { justify-content: space-between; }
+  .connect-form, .agent-grid, .command-console, .detail-layout, .agent-form, .agent-options, .mini-cards, .modal-card .agent-options, .low-focus-row, .shared-document-row { grid-template-columns: 1fr; }
+  .low-focus-meta, .shared-document-actions { justify-content: space-between; }
   .card-metrics { grid-template-columns: repeat(2, 1fr); gap: 16px; }
   .detail-list div { grid-template-columns: 1fr; }
 }

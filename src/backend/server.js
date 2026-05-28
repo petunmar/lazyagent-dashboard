@@ -17,6 +17,7 @@ const maxThinkingChars = Number(process.env.MAX_THINKING_CHARS || 2_000);
 const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "session-names.json");
 const dashboardSystemPromptFile = process.env.DASHBOARD_SYSTEM_PROMPT_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "system-prompt.md");
 const attachmentRoot = process.env.ATTACHMENT_UPLOAD_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "uploads");
+const sharedDocumentsDir = process.env.SHARED_DOCUMENTS_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "shared-documents");
 const maxAttachmentFiles = Math.max(1, Number(process.env.MAX_ATTACHMENT_FILES || 12));
 const maxAttachmentBytes = Math.max(1024, Number(process.env.MAX_ATTACHMENT_BYTES || 25 * 1024 * 1024));
 const maxJsonBodyBytes = Math.max(maxAttachmentBytes * maxAttachmentFiles * 2, Number(process.env.MAX_JSON_BODY_BYTES || 80 * 1024 * 1024));
@@ -129,6 +130,16 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/directories") {
       const payload = await listDirectories(url.searchParams.get("path"));
       writeJson(res, 200, payload);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/shared-documents") {
+      writeJson(res, 200, { documents: await listSharedDocuments() });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/shared-documents/")) {
+      await serveSharedDocument(url.pathname, res);
       return;
     }
 
@@ -1407,6 +1418,44 @@ function serveLoginPage(res) {
   res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lazyagent Dashboard Login</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#09090b;color:#fafafa;font:16px system-ui,sans-serif}.card{width:min(92vw,420px);padding:28px;border:1px solid #27272a;border-radius:18px;background:#18181b;box-shadow:0 24px 80px #0008}h1{margin:0 0 8px;font-size:24px}p{color:#a1a1aa}input,button{width:100%;box-sizing:border-box;border-radius:12px;padding:12px 14px;font:inherit}input{border:1px solid #3f3f46;background:#09090b;color:#fff}button{margin-top:14px;border:0;background:#84cc16;color:#111827;font-weight:700;cursor:pointer}.error{min-height:22px;color:#fb7185}</style></head><body><form class="card"><h1>Lazyagent Dashboard</h1><p>Enter the dashboard password for this device.</p><input name="password" type="password" autocomplete="current-password" autofocus required><button>Unlock</button><p class="error" role="alert"></p></form><script>const f=document.querySelector('form'),e=document.querySelector('.error');f.addEventListener('submit',async ev=>{ev.preventDefault();e.textContent='';const r=await fetch('/api/dashboard-auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:f.password.value})});if(r.ok) location.reload(); else e.textContent='Invalid password or too many attempts.'});</script></body></html>`);
 }
 
+async function listSharedDocuments() {
+  await mkdir(sharedDocumentsDir, { recursive: true });
+  const entries = await readdir(sharedDocumentsDir, { withFileTypes: true });
+  const docs = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.name.startsWith(".")) continue;
+    const file = path.join(sharedDocumentsDir, entry.name);
+    const info = await stat(file);
+    docs.push({
+      name: entry.name,
+      url: `/shared-documents/${encodeURIComponent(entry.name)}`,
+      size: info.size,
+      modified_at: info.mtime.toISOString(),
+      type: contentType(entry.name),
+    });
+  }
+  docs.sort((a, b) => b.modified_at.localeCompare(a.modified_at));
+  return docs;
+}
+
+async function serveSharedDocument(requestPath, res) {
+  const encoded = requestPath.slice("/shared-documents/".length);
+  const name = path.basename(decodeURIComponent(encoded));
+  if (!name || name === "." || name === "..") throw httpError(400, "invalid document name");
+  const root = path.resolve(sharedDocumentsDir);
+  const file = path.resolve(root, name);
+  if (!file.startsWith(root + path.sep)) throw httpError(400, "invalid document path");
+  const info = await stat(file).catch(() => null);
+  if (!info?.isFile()) throw httpError(404, "document not found");
+  res.writeHead(200, {
+    "Content-Type": contentType(file),
+    "Content-Length": String(info.size),
+    "Content-Disposition": `inline; filename="${name.replace(/["\\]/g, "_")}"`,
+    "Cache-Control": "private, max-age=300",
+  });
+  createReadStream(file).pipe(res);
+}
+
 async function serveStatic(requestPath, res) {
   if (requestPath.startsWith("/api/")) return false;
   const root = path.join(projectRoot, "dist");
@@ -1430,6 +1479,9 @@ function contentType(file) {
   if (file.endsWith(".js")) return "text/javascript; charset=utf-8";
   if (file.endsWith(".css")) return "text/css; charset=utf-8";
   if (file.endsWith(".json")) return "application/json; charset=utf-8";
+  if (file.endsWith(".pdf")) return "application/pdf";
+  if (file.endsWith(".md")) return "text/markdown; charset=utf-8";
+  if (file.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
 }
 

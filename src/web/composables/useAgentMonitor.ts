@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, SessionDetail, SessionFilter, SessionItem, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSharedDocuments, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, SessionDetail, SessionFilter, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -12,6 +12,7 @@ type State = {
   sessions: SessionItem[];
   stats: Stats | null;
   spend: SpendSummary | null;
+  sharedDocuments: SharedDocument[];
   selectedId: string;
   selectedDetail: SessionDetail | null;
   rawEvents: RawSessionEvents | null;
@@ -66,6 +67,7 @@ const state = reactive<State>({
   sessions: [],
   stats: null,
   spend: null,
+  sharedDocuments: [],
   selectedId: "",
   selectedDetail: null,
   rawEvents: null,
@@ -143,6 +145,7 @@ export function useAgentMonitor() {
       state.status = "connected";
       state.modal = null;
       await loadWidgets();
+      await loadSharedDocuments();
       await refresh();
       connectEvents();
     } catch (error) {
@@ -168,6 +171,7 @@ export function useAgentMonitor() {
       void loadVisibleCardTools();
       void loadWidgetStatuses();
       void loadSpend();
+      void loadSharedDocuments();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
     }
@@ -246,6 +250,14 @@ export function useAgentMonitor() {
       state.gitInfoByCwd[cwd] = { cwd, generated_at: new Date().toISOString(), is_git_repo: false, error: error instanceof Error ? error.message : String(error) };
     } finally {
       state.gitInfoLoading[cwd] = false;
+    }
+  }
+
+  async function loadSharedDocuments(): Promise<void> {
+    try {
+      state.sharedDocuments = await fetchSharedDocuments();
+    } catch {
+      state.sharedDocuments = [];
     }
   }
 
@@ -637,6 +649,7 @@ export function useAgentMonitor() {
     openDirectoryPicker,
     selectDirectory,
     loadPiResources,
+    loadSharedDocuments,
     saveDashboardSystemPrompt,
     setResourceFilter,
     handlePopstate,
