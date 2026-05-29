@@ -10,7 +10,7 @@ WorkingDirectory=/home/petur/coding/lazyagent-extension
 Environment=PATH=/home/petur/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/lazyagent-dashboard.env
 ExecStartPre=/usr/bin/env npm run build
-ExecStart=/usr/bin/env npm run start
+ExecStart=/usr/bin/env node src/backend/server.js
 Restart=always
 RestartSec=10
 # Do not set RuntimeMaxSec here: dashboard-launched agents can run for hours.

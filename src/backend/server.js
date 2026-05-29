@@ -1541,7 +1541,7 @@ function setSecurityHeaders(req, res) {
     `frame-ancestors ${widgetFrame ? "'self'" : "'none'"}`,
   ].join("; "));
   res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (!authEnabled) {
     res.setHeader("Access-Control-Allow-Origin", "*");
