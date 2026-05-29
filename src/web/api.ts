@@ -74,6 +74,12 @@ export async function fetchSharedDocuments(): Promise<SharedDocument[]> {
   return ((await res.json()) as { documents: SharedDocument[] }).documents || [];
 }
 
+export async function cleanSharedDocuments(): Promise<SharedDocument[]> {
+  const res = await fetch(`${extensionApiBase()}/api/shared-documents`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+  return ((await res.json()) as { documents: SharedDocument[] }).documents || [];
+}
+
 export function sharedDocumentUrl(document: SharedDocument): string {
   return `${extensionApiBase()}${document.url}`;
 }

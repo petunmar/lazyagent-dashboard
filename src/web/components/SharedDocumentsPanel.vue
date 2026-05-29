@@ -30,6 +30,7 @@ function formatDate(value: string): string {
     <div class="console-head">
       <span>shared documents</span>
       <h2>Files ready to read or print</h2>
+      <button class="doc-button secondary" type="button" @click="monitor.cleanDocuments()">Clean</button>
     </div>
     <div class="shared-document-list">
       <article v-for="document in documents" :key="document.name" class="shared-document-row">

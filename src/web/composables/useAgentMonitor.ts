@@ -1,5 +1,5 @@
 import { computed, nextTick, reactive } from "vue";
-import { fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSharedDocuments, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
+import { cleanSharedDocuments, fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSharedDocuments, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
 import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, SessionDetail, SessionFilter, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
@@ -258,6 +258,15 @@ export function useAgentMonitor() {
       state.sharedDocuments = await fetchSharedDocuments();
     } catch {
       state.sharedDocuments = [];
+    }
+  }
+
+  async function cleanDocuments(): Promise<void> {
+    try {
+      state.sharedDocuments = await cleanSharedDocuments();
+      state.error = "";
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
     }
   }
 
@@ -650,6 +659,7 @@ export function useAgentMonitor() {
     selectDirectory,
     loadPiResources,
     loadSharedDocuments,
+    cleanDocuments,
     saveDashboardSystemPrompt,
     setResourceFilter,
     handlePopstate,

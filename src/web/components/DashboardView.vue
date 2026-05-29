@@ -5,7 +5,7 @@ import SharedDocumentsPanel from "./SharedDocumentsPanel.vue";
 import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import type { SessionFilter } from "../types";
-import { isLowFocusSession, lowFocusAfterMinutes } from "../utils";
+import { displaySessionName, isLowFocusSession, lowFocusAfterMinutes } from "../utils";
 
 const props = defineProps<{ monitor: ReturnType<typeof useAgentMonitor> }>();
 const state = props.monitor.state;
@@ -46,7 +46,7 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
     <p class="low-focus-note">Idle for {{ lowFocusAfterMinutes }}+ minutes. Includes archived agents from local Pi session logs for the past 12 hours.</p>
     <div class="low-focus-list">
       <article v-for="session in lowFocusSessions" :key="session.session_id" class="low-focus-row" :class="{ 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id) }" tabindex="0" role="button" @click="monitor.selectSession(session.session_id)">
-        <div><strong>{{ session.short_name }}</strong><span>{{ session.cwd }} · {{ session.session_id.replaceAll('-', '').slice(0, 8) }}</span></div>
+        <div><strong>{{ displaySessionName(session, state.sessionNames) }}</strong><span><template v-if="session.agent">{{ session.agent }} · </template>{{ session.cwd }} · {{ session.session_id.replaceAll('-', '').slice(0, 8) }}</span></div>
         <div class="low-focus-meta"><span>{{ session.activity }}</span><time>{{ session.last_activity }}</time><button class="rename-chip" type="button" @click.stop="monitor.openModal('rename', session.session_id)">rename</button></div>
       </article>
     </div>

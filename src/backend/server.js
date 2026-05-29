@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac, pbkdf2Sync } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -134,6 +134,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/shared-documents") {
+      writeJson(res, 200, { documents: await listSharedDocuments() });
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname === "/api/shared-documents") {
+      await cleanSharedDocuments();
       writeJson(res, 200, { documents: await listSharedDocuments() });
       return;
     }
@@ -1436,6 +1442,16 @@ async function listSharedDocuments() {
   }
   docs.sort((a, b) => b.modified_at.localeCompare(a.modified_at));
   return docs;
+}
+
+async function cleanSharedDocuments() {
+  await mkdir(sharedDocumentsDir, { recursive: true });
+  const entries = await readdir(sharedDocumentsDir, { withFileTypes: true });
+  await Promise.all(entries
+    .filter(entry => entry.isFile() && !entry.name.startsWith("."))
+    .map(entry => unlink(path.join(sharedDocumentsDir, entry.name)).catch(error => {
+      if (error?.code !== "ENOENT") throw error;
+    })));
 }
 
 async function serveSharedDocument(requestPath, res) {
