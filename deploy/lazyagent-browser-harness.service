@@ -1,0 +1,19 @@
+[Unit]
+Description=Headless Chrome for pi-browser-harness
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=petur
+# Install a Chromium binary first, for example:
+#   npx --yes playwright install chromium
+ExecStart=/home/petur/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome --headless=new --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 --user-data-dir=/home/petur/.config/chromium --no-sandbox --disable-dev-shm-usage about:blank
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

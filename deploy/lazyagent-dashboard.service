@@ -20,7 +20,8 @@ KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=30
 NoNewPrivileges=true
-PrivateTmp=true
+# Shared /tmp lets the dashboard render browser_screenshot files saved by pi-browser-harness.
+PrivateTmp=false
 # The dashboard launches pi in project directories, so it needs normal access to /home/petur.
 
 [Install]

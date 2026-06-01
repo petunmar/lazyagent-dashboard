@@ -826,6 +826,10 @@ button.ghost { border-color: var(--line); color: var(--muted); }
 .message header span, .tool-row span, .raw-event header span { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .message p { margin: 8px 0 0; color: var(--cream); line-height: 1.45; white-space: pre-wrap; }
 .raw-event pre { margin: 10px 0 0; white-space: pre-wrap; overflow-x: auto; color: var(--cream); line-height: 1.45; font-size: 13px; }
+.event-images { display: grid; gap: 10px; margin-top: 10px; }
+.event-images figure { margin: 0; }
+.event-images img { display: block; max-width: 100%; max-height: 520px; border: 1px solid var(--line-soft); border-radius: 12px; background: #050505; object-fit: contain; }
+.event-images figcaption { margin-top: 6px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .raw-event.tool_call { border-color: rgba(231,255,88,.45); }
 .raw-event.tool_result { border-color: rgba(132,184,146,.45); }
 .raw-event.thinking { border-color: rgba(201,194,173,.45); }

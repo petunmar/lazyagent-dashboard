@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac, pbkdf2Sync } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
@@ -833,7 +833,7 @@ async function sessionEvents(sessionId, limit = maxEvents) {
   if (!/^[A-Za-z0-9_.:T-]+$/.test(sessionId)) throw httpError(400, "invalid session id");
   const file = await findSessionFile(sessionId);
   const text = await readFile(file, "utf8");
-  const parsed = parseJsonl(text, file);
+  const parsed = parseJsonl(text, file, { includeImages: true });
   return {
     session_id: sessionId,
     file,
@@ -1055,7 +1055,8 @@ function roundMoney(value) {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-function parseJsonl(text, file) {
+function parseJsonl(text, file, options = {}) {
+  const includeImages = Boolean(options.includeImages);
   const events = [];
   const lines = text.split(/\r?\n/).filter(Boolean);
   for (let index = 0; index < lines.length; index++) {
@@ -1086,9 +1087,11 @@ function parseJsonl(text, file) {
     const content = normalizeContent(message.content);
 
     if (message.role === "user") {
+      const images = includeImages ? content.map(imageFromContentBlock).filter(Boolean) : [];
       for (const block of content) {
-        if (block.type === "text" && block.text) events.push({ kind: "user", line: index + 1, timestamp, text: block.text });
+        if (block.type === "text" && block.text) events.push({ kind: "user", line: index + 1, timestamp, text: block.text, images });
       }
+      if (images.length && !content.some(block => block.type === "text" && block.text)) events.push({ kind: "user", line: index + 1, timestamp, text: "", images });
       continue;
     }
 
@@ -1120,6 +1123,10 @@ function parseJsonl(text, file) {
 
     if (message.role === "toolResult") {
       const resultText = content.map(block => block.text || block.content || "").filter(Boolean).join("\n");
+      const images = includeImages ? [
+        ...content.map(imageFromContentBlock).filter(Boolean),
+        ...imagesFromToolDetails(message.details),
+      ] : [];
       events.push({
         kind: "tool_result",
         line: index + 1,
@@ -1128,10 +1135,43 @@ function parseJsonl(text, file) {
         tool_name: message.toolName,
         text: truncate(resultText, maxToolResultChars),
         truncated: resultText.length > maxToolResultChars,
+        details: message.details ?? null,
+        images,
       });
     }
   }
   return { file, events };
+}
+
+function imageFromContentBlock(block) {
+  if (block?.type !== "image") return null;
+  const data = typeof block.data === "string" ? block.data : (block.source?.type === "base64" ? block.source.data : "");
+  const mimeType = typeof block.mimeType === "string" ? block.mimeType : (typeof block.source?.mediaType === "string" ? block.source.mediaType : "image/png");
+  if (!data) return null;
+  return { mimeType, data };
+}
+
+function imagesFromToolDetails(details) {
+  const image = imageFromScreenshotDetails(details);
+  return image ? [image] : [];
+}
+
+function imageFromScreenshotDetails(details) {
+  const filePath = typeof details?.path === "string" ? details.path : "";
+  if (!filePath || !isSafeScreenshotPath(filePath)) return null;
+  try {
+    const data = readFileSync(filePath).toString("base64");
+    const mimeType = details.format === "jpeg" || filePath.endsWith(".jpeg") || filePath.endsWith(".jpg") ? "image/jpeg" : "image/png";
+    return { mimeType, data, path: filePath };
+  } catch {
+    return null;
+  }
+}
+
+function isSafeScreenshotPath(filePath) {
+  const base = path.basename(filePath);
+  const dir = path.dirname(filePath);
+  return dir === "/tmp" && /^pi-browser-screenshot-[A-Za-z0-9_-]+-[0-9a-f-]+\.(png|jpe?g)$/i.test(base);
 }
 
 function normalizeContent(content) {

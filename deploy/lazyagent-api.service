@@ -18,7 +18,8 @@ KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=30
 NoNewPrivileges=true
-PrivateTmp=true
+# Shared /tmp lets the dashboard render browser_screenshot files saved by pi-browser-harness.
+PrivateTmp=false
 
 [Install]
 WantedBy=multi-user.target

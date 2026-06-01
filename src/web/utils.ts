@@ -116,6 +116,10 @@ export function eventBody(event: SessionEvent): string {
   return "";
 }
 
+export function eventImageSrc(image: { mimeType: string; data: string }): string {
+  return `data:${image.mimeType || "image/png"};base64,${image.data}`;
+}
+
 export function formatCompact(value: number): string {
   if (!value) return "0";
   if (value >= 1_000_000) return `${trimNumber(value / 1_000_000)}M`;
