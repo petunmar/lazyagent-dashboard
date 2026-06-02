@@ -50,7 +50,7 @@ export async function fetchSessionEvents(id: string, limit: number): Promise<Raw
   return res.json();
 }
 
-export async function fetchRecentSessions(hours = 12): Promise<SessionItem[]> {
+export async function fetchRecentSessions(hours = 24): Promise<SessionItem[]> {
   const res = await fetch(`${extensionApiBase()}/api/recent-sessions?hours=${hours}`);
   if (!res.ok) return [];
   return ((await res.json()) as { sessions: SessionItem[] }).sessions || [];

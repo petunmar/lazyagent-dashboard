@@ -322,7 +322,7 @@ export function useAgentMonitor() {
 
   async function loadSessions(): Promise<SessionItem[]> {
     if (!client) return [];
-    const [active, recent] = await Promise.all([client.sessions(), fetchRecentSessions(12)]);
+    const [active, recent] = await Promise.all([client.sessions(), fetchRecentSessions(24)]);
     return mergeSessions(active, recent);
   }
 

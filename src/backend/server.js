@@ -116,7 +116,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/recent-sessions") {
-      const hours = parseHours(url.searchParams.get("hours"), 12);
+      const hours = parseHours(url.searchParams.get("hours"), 24);
       writeJson(res, 200, { sessions: await recentLocalSessions(hours), hours });
       return;
     }
@@ -884,7 +884,7 @@ async function listSessionFiles() {
   return files;
 }
 
-async function recentLocalSessions(hours = 12) {
+async function recentLocalSessions(hours = 24) {
   const cutoff = Date.now() - hours * 60 * 60 * 1000;
   const summaries = [];
   for (const file of await listSessionFiles()) {

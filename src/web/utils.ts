@@ -1,6 +1,6 @@
 import type { SessionDetail, SessionFilter, SessionItem, SessionEvent, ToolSparkItem } from "./types";
 
-export const lowFocusAfterMinutes = 10;
+export const quietSessionWindowHours = 24;
 
 export function extensionApiBase(): string {
   const local = location.hostname === "127.0.0.1" || location.hostname === "localhost";
@@ -30,7 +30,13 @@ export function summarizeSessions(sessions: SessionItem[]): Record<SessionFilter
 }
 
 export function isLowFocusSession(s: SessionItem): boolean {
-  return !s.is_active && minutesSince(s.last_activity) >= lowFocusAfterMinutes;
+  return !s.is_active && hoursSince(s.last_activity) <= quietSessionWindowHours;
+}
+
+export function hoursSince(value: string): number {
+  const diff = Date.now() - Date.parse(value);
+  if (!Number.isFinite(diff)) return Number.POSITIVE_INFINITY;
+  return diff / 3_600_000;
 }
 
 export function minutesSince(value: string): number {

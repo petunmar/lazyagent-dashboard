@@ -5,7 +5,7 @@ import SharedDocumentsPanel from "./SharedDocumentsPanel.vue";
 import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import type { SessionFilter } from "../types";
-import { displaySessionName, isLowFocusSession, lowFocusAfterMinutes } from "../utils";
+import { displaySessionName, isLowFocusSession, quietSessionWindowHours } from "../utils";
 
 const props = defineProps<{ monitor: ReturnType<typeof useAgentMonitor> }>();
 const state = props.monitor.state;
@@ -38,12 +38,12 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
 
   <section class="agent-grid">
     <AgentCard v-for="session in focusSessions" :key="session.session_id" :session="session" :monitor="monitor" />
-    <article v-if="!focusSessions.length" class="agent-card empty-card"><h3>No matching agents</h3><p>{{ lowFocusSessions.length ? 'No high-focus agents. Older idle sessions are listed below.' : 'Connect lazyagent or change the filter.' }}</p></article>
+    <article v-if="!focusSessions.length" class="agent-card empty-card"><h3>No matching agents</h3><p>{{ lowFocusSessions.length ? 'No high-focus agents. Quiet sessions from the last 24 hours are listed below.' : 'Connect lazyagent or change the filter.' }}</p></article>
   </section>
 
   <section v-if="lowFocusSessions.length" class="low-focus-panel console-card" aria-label="Inactive recent sessions">
-    <div class="console-head"><span>recent idle</span><h2>Quiet sessions</h2></div>
-    <p class="low-focus-note">Idle for {{ lowFocusAfterMinutes }}+ minutes. Includes archived agents from local Pi session logs for the past 12 hours.</p>
+    <div class="console-head"><span>last {{ quietSessionWindowHours }}h</span><h2>Quiet sessions</h2></div>
+    <p class="low-focus-note">All inactive sessions with activity in the last {{ quietSessionWindowHours }} hours, including archived agents from local Pi session logs.</p>
     <div class="low-focus-list">
       <article v-for="session in lowFocusSessions" :key="session.session_id" class="low-focus-row" :class="{ 'widget-alert': monitor.sessionHasWidgetAlert(session.session_id) }" tabindex="0" role="button" @click="monitor.selectSession(session.session_id)">
         <div><strong>{{ displaySessionName(session, state.sessionNames) }}</strong><span><template v-if="session.agent">{{ session.agent }} · </template>{{ session.cwd }} · {{ session.session_id.replaceAll('-', '').slice(0, 8) }}</span></div>
