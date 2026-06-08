@@ -5,13 +5,15 @@ import SharedDocumentsPanel from "./SharedDocumentsPanel.vue";
 import WidgetFrame from "./WidgetFrame.vue";
 import type { useAgentMonitor } from "../composables/useAgentMonitor";
 import type { SessionFilter } from "../types";
-import { displaySessionName, isLowFocusSession, quietSessionWindowHours } from "../utils";
+import { displaySessionName, isLowFocusSession, quietSessionWindowHours, relativeTime } from "../utils";
 
 const props = defineProps<{ monitor: ReturnType<typeof useAgentMonitor> }>();
 const state = props.monitor.state;
 const filters: SessionFilter[] = ["all", "working", "idle", "errored"];
 const focusSessions = computed(() => props.monitor.visibleSessions.value.filter(session => !isLowFocusSession(session)));
 const lowFocusSessions = computed(() => props.monitor.visibleSessions.value.filter(isLowFocusSession));
+const upcomingSchedules = computed(() => state.schedules.filter(schedule => schedule.enabled).slice(0, 3));
+const recentScheduleRuns = computed(() => state.schedules.flatMap(schedule => (schedule.history || []).slice(0, 2).map(run => ({ ...run, schedule }))).sort((a, b) => b.fired_at.localeCompare(a.fired_at)).slice(0, 3));
 const topWidgets = computed(() => state.widgets.filter(widget => {
   const slot = "dashboard:top";
   if (!widget.slots.includes(slot)) return false;
@@ -26,6 +28,7 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
     <div class="filter-pills">
       <button v-for="filter in filters" :key="filter" class="pill" :class="{ active: state.filter === filter }" type="button" @click="state.filter = filter; monitor.loadVisibleCardTools()">{{ filter }}</button>
       <button class="pill" type="button" @click="monitor.navigateTo('pi-resources')">skills + extensions</button>
+      <button class="pill" type="button" @click="monitor.navigateTo('schedules')">schedules</button>
       <button class="pill create" type="button" @click="monitor.openModal('launch')">+ new agent</button>
     </div>
   </section>
@@ -35,6 +38,27 @@ const topWidgets = computed(() => state.widgets.filter(widget => {
   </section>
 
   <SharedDocumentsPanel :monitor="monitor" />
+
+  <section class="schedule-summary console-card" aria-label="Schedules summary">
+    <div class="console-head"><span>core</span><h2>Schedules</h2></div>
+    <div class="schedule-summary-grid">
+      <div>
+        <h3>Next due</h3>
+        <p v-if="!upcomingSchedules.length" class="low-focus-note">No enabled schedules yet.</p>
+        <button v-for="schedule in upcomingSchedules" :key="schedule.id" class="schedule-summary-row" type="button" @click="monitor.navigateTo('schedules')">
+          <strong>{{ schedule.name }}</strong><span>{{ schedule.next_fire_at ? relativeTime(schedule.next_fire_at) : 'not scheduled' }}</span>
+        </button>
+      </div>
+      <div>
+        <h3>Recent runs</h3>
+        <p v-if="!recentScheduleRuns.length" class="low-focus-note">No schedule runs recorded.</p>
+        <button v-for="run in recentScheduleRuns" :key="run.id" class="schedule-summary-row" type="button" @click="monitor.navigateTo('schedules')">
+          <strong>{{ run.schedule.name }}</strong><span>{{ run.status }} · {{ relativeTime(run.fired_at) }}</span>
+        </button>
+      </div>
+    </div>
+    <div class="agent-actions"><button class="secondary" type="button" @click="monitor.loadSchedules()">refresh</button><button type="button" @click="monitor.navigateTo('schedules')">manage schedules</button></div>
+  </section>
 
   <section class="agent-grid">
     <AgentCard v-for="session in focusSessions" :key="session.session_id" :session="session" :monitor="monitor" />

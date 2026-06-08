@@ -1,5 +1,5 @@
 export type SessionFilter = "all" | "working" | "idle" | "errored";
-export type ViewMode = "dashboard" | "detail" | "pi-resources";
+export type ViewMode = "dashboard" | "detail" | "pi-resources" | "schedules";
 export type ModalType = "launch" | "message" | "connect" | "rename";
 export type TranscriptMode = "recent" | "full";
 export type PiResourceKind = "all" | "skill" | "extension";
@@ -201,5 +201,37 @@ export type WidgetStatus = {
   pending?: number;
   session_highlights?: string[];
 };
+
+export type ScheduleRun = {
+  id: string;
+  status: "running" | "launched" | "failed" | "skipped";
+  source: "scheduled" | "manual";
+  scheduled_at: string;
+  fired_at: string;
+  finished_at?: string;
+  run_id?: string;
+  session_id?: string;
+  error?: string;
+};
+
+export type Schedule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  cwd: string;
+  prompt: string;
+  kind: "one-off" | "recurring";
+  cron: string;
+  run_at: string;
+  model: string;
+  thinking: string;
+  readonly: boolean;
+  created_at: string;
+  updated_at: string;
+  next_fire_at: string;
+  history: ScheduleRun[];
+};
+
+export type SchedulePayload = { schedules: Schedule[]; generated_at: string };
 
 export type EventsUpdate = { sessions: SessionItem[]; stats: Stats };

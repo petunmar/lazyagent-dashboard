@@ -1,0 +1,3 @@
+# Schedules use cron in Reykjavík time
+
+Schedules will use standard 5-field cron expressions interpreted in GMT+0 Reykjavík time rather than a structured recurrence builder. The backend only promises 5-minute firing precision, which fits Agent Monitor's local-first control surface and avoids implying clock-grade guarantees for coding-agent work. This keeps the first version compact and expressive for technical users, while avoiding daylight-saving ambiguity; the trade-off is that validation and UX must explain the cron format clearly because users will not have guided recurrence controls in v1.

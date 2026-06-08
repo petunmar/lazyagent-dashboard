@@ -18,6 +18,7 @@ const sessionNamesFile = process.env.SESSION_NAMES_FILE || path.join(homedir(), 
 const dashboardSystemPromptFile = process.env.DASHBOARD_SYSTEM_PROMPT_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "system-prompt.md");
 const attachmentRoot = process.env.ATTACHMENT_UPLOAD_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "uploads");
 const sharedDocumentsDir = process.env.SHARED_DOCUMENTS_DIR || path.join(homedir(), ".pi", "lazyagent-extension", "shared-documents");
+const schedulesFile = process.env.SCHEDULES_FILE || path.join(homedir(), ".pi", "lazyagent-extension", "schedules.json");
 const maxAttachmentFiles = Math.max(1, Number(process.env.MAX_ATTACHMENT_FILES || 12));
 const maxAttachmentBytes = Math.max(1024, Number(process.env.MAX_ATTACHMENT_BYTES || 25 * 1024 * 1024));
 const maxJsonBodyBytes = Math.max(maxAttachmentBytes * maxAttachmentFiles * 2, Number(process.env.MAX_JSON_BODY_BYTES || 80 * 1024 * 1024));
@@ -44,6 +45,7 @@ const runs = new Map();
 const gitInfoCache = new Map();
 const gitInfoTtlMs = Math.max(30_000, Number(process.env.GIT_INFO_TTL_MS || 300_000));
 const widgetsReady = loadWidgets();
+let scheduleTickRunning = false;
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
@@ -218,6 +220,34 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/schedules") {
+      writeJson(res, 200, await listSchedules());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/schedules") {
+      writeJson(res, 201, await createSchedule(await readJson(req)));
+      return;
+    }
+
+    if ((req.method === "PUT" || req.method === "PATCH") && url.pathname.startsWith("/api/schedules/")) {
+      const id = decodeURIComponent(url.pathname.slice("/api/schedules/".length));
+      writeJson(res, 200, await updateSchedule(id, await readJson(req)));
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/schedules/")) {
+      const id = decodeURIComponent(url.pathname.slice("/api/schedules/".length));
+      writeJson(res, 200, await deleteSchedule(id));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname.match(/^\/api\/schedules\/[^/]+\/run$/)) {
+      const id = decodeURIComponent(url.pathname.split("/")[3]);
+      writeJson(res, 202, await runScheduleNow(id));
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/health") {
       writeJson(res, 200, { ok: true, piSessionsDir });
       return;
@@ -240,6 +270,8 @@ server.listen(port, host, () => {
   console.log(`dashboard password auth ${authEnabled ? "enabled" : "disabled (set DASHBOARD_PASSWORD_HASH and DASHBOARD_AUTH_SECRET for public access)"}`);
   console.log(`reading pi sessions from ${piSessionsDir}`);
   console.log(`loading widgets from ${widgetDirs.join(", ") || "(none)"}`);
+  console.log(`loading schedules from ${schedulesFile}`);
+  startScheduleTimer();
 });
 
 async function startAgent(body) {
@@ -346,6 +378,310 @@ async function writeDashboardSystemPrompt(value) {
   await writeFile(dashboardSystemPromptFile, prompt, "utf8");
 }
 
+async function listSchedules() {
+  const store = await readScheduleStore();
+  const now = new Date();
+  let changed = false;
+  for (const schedule of store.schedules) {
+    if (!schedule.next_fire_at || schedule.enabled === false) {
+      const next = computeNextFire(schedule, now);
+      if (next && schedule.next_fire_at !== next) {
+        schedule.next_fire_at = next;
+        changed = true;
+      }
+    }
+  }
+  if (changed) await writeScheduleStore(store);
+  return { schedules: store.schedules.sort((a, b) => (a.next_fire_at || "9999").localeCompare(b.next_fire_at || "9999")), generated_at: new Date().toISOString() };
+}
+
+async function createSchedule(body) {
+  const store = await readScheduleStore();
+  const now = new Date().toISOString();
+  const schedule = normalizeSchedule(body, null, now);
+  store.schedules.push(schedule);
+  await writeScheduleStore(store);
+  scheduleScheduleTick(500);
+  return { schedule };
+}
+
+async function updateSchedule(id, body) {
+  const store = await readScheduleStore();
+  const index = store.schedules.findIndex(schedule => schedule.id === id);
+  if (index < 0) throw httpError(404, "schedule not found");
+  const now = new Date().toISOString();
+  const previous = store.schedules[index];
+  store.schedules[index] = normalizeSchedule({ ...previous, ...body }, previous, now);
+  await writeScheduleStore(store);
+  scheduleScheduleTick(500);
+  return { schedule: store.schedules[index] };
+}
+
+async function deleteSchedule(id) {
+  const store = await readScheduleStore();
+  const next = store.schedules.filter(schedule => schedule.id !== id);
+  if (next.length === store.schedules.length) throw httpError(404, "schedule not found");
+  store.schedules = next;
+  await writeScheduleStore(store);
+  return { ok: true };
+}
+
+async function runScheduleNow(id) {
+  return fireScheduleById(id, { source: "manual", scheduledAt: new Date().toISOString(), ignoreEnabled: true });
+}
+
+function normalizeSchedule(body, previous, now) {
+  const kind = String(body?.kind || previous?.kind || "recurring");
+  if (!["one-off", "recurring"].includes(kind)) throw httpError(400, "schedule kind must be one-off or recurring");
+  const name = String(body?.name || "").trim();
+  const cwd = expandUserPath(String(body?.cwd || "").trim());
+  const prompt = String(body?.prompt || "").trim();
+  if (!name) throw httpError(400, "name is required");
+  if (name.length > 80) throw httpError(400, "name must be 80 characters or fewer");
+  if (!cwd) throw httpError(400, "cwd is required");
+  if (!prompt) throw httpError(400, "prompt is required");
+  const schedule = {
+    id: previous?.id || `sch_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`,
+    name,
+    enabled: body?.enabled !== false,
+    cwd,
+    prompt,
+    kind,
+    cron: kind === "recurring" ? String(body?.cron || "").trim() : "",
+    run_at: kind === "one-off" ? normalizeReykjavikTimestamp(body?.run_at) : "",
+    model: String(body?.model || "").trim(),
+    thinking: String(body?.thinking || "").trim(),
+    readonly: Boolean(body?.readonly),
+    created_at: previous?.created_at || now,
+    updated_at: now,
+    next_fire_at: "",
+    history: Array.isArray(previous?.history) ? previous.history.slice(0, 50) : [],
+  };
+  if (kind === "recurring") parseCron(schedule.cron);
+  schedule.next_fire_at = computeNextFire(schedule, new Date(now)) || "";
+  return schedule;
+}
+
+function normalizeReykjavikTimestamp(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!match) throw httpError(400, "run_at must look like 2026-06-09 14:30");
+  const [, y, mo, d, h, mi] = match;
+  const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), 0, 0));
+  if (date.getUTCFullYear() !== Number(y) || date.getUTCMonth() !== Number(mo) - 1 || date.getUTCDate() !== Number(d) || date.getUTCHours() !== Number(h) || date.getUTCMinutes() !== Number(mi)) {
+    throw httpError(400, "run_at is not a valid Reykjavík timestamp");
+  }
+  return date.toISOString();
+}
+
+async function readScheduleStore() {
+  try {
+    const parsed = JSON.parse(await readFile(schedulesFile, "utf8"));
+    const schedules = Array.isArray(parsed?.schedules) ? parsed.schedules.map(coerceStoredSchedule).filter(Boolean) : [];
+    return { version: 1, schedules };
+  } catch (error) {
+    if (error.code === "ENOENT") return { version: 1, schedules: [] };
+    throw error;
+  }
+}
+
+function coerceStoredSchedule(schedule) {
+  if (!schedule || typeof schedule !== "object" || !schedule.id) return null;
+  return { ...schedule, history: Array.isArray(schedule.history) ? schedule.history.slice(0, 50) : [] };
+}
+
+async function writeScheduleStore(store) {
+  await mkdir(path.dirname(schedulesFile), { recursive: true });
+  await writeFile(schedulesFile, `${JSON.stringify({ version: 1, schedules: store.schedules }, null, 2)}\n`, "utf8");
+}
+
+function startScheduleTimer() {
+  scheduleScheduleTick(1000);
+  setInterval(() => scheduleScheduleTick(), 5 * 60 * 1000).unref?.();
+}
+
+function scheduleScheduleTick(delay = 0) {
+  setTimeout(() => void processDueSchedules(), delay).unref?.();
+}
+
+async function processDueSchedules() {
+  if (scheduleTickRunning) return;
+  scheduleTickRunning = true;
+  try {
+    const store = await readScheduleStore();
+    const now = new Date();
+    let changed = false;
+    for (const schedule of store.schedules) {
+      if (!schedule.enabled) {
+        const next = computeNextFire(schedule, now);
+        if (next && schedule.next_fire_at !== next) {
+          schedule.next_fire_at = next;
+          changed = true;
+        }
+        continue;
+      }
+      const next = schedule.next_fire_at || computeNextFire(schedule, now);
+      if (next && Date.parse(next) <= now.getTime()) {
+        await fireSchedule(schedule, store, { source: "scheduled", scheduledAt: next });
+        changed = true;
+      } else if (next && schedule.next_fire_at !== next) {
+        schedule.next_fire_at = next;
+        changed = true;
+      }
+    }
+    if (changed) await writeScheduleStore(store);
+  } catch (error) {
+    console.error("schedule tick failed", error);
+  } finally {
+    scheduleTickRunning = false;
+  }
+}
+
+async function fireScheduleById(id, options) {
+  const store = await readScheduleStore();
+  const schedule = store.schedules.find(item => item.id === id);
+  if (!schedule) throw httpError(404, "schedule not found");
+  const result = await fireSchedule(schedule, store, options);
+  await writeScheduleStore(store);
+  return result;
+}
+
+async function fireSchedule(schedule, store, { source, scheduledAt, ignoreEnabled = false }) {
+  if (!ignoreEnabled && !schedule.enabled) throw httpError(400, "schedule is disabled");
+  if (scheduleHasActiveRun(schedule)) {
+    const run = addScheduleHistory(schedule, { status: "skipped", source, scheduled_at: scheduledAt, fired_at: new Date().toISOString(), error: "previous run still active" });
+    advanceSchedule(schedule, scheduledAt);
+    return { schedule, schedule_run: run };
+  }
+  const scheduleRun = addScheduleHistory(schedule, { status: "running", source, scheduled_at: scheduledAt, fired_at: new Date().toISOString() });
+  try {
+    await assertDirectory(schedule.cwd);
+    const sessionDir = sessionDirForCwd(schedule.cwd);
+    await mkdir(sessionDir, { recursive: true });
+    const args = await piRunArgs(["-p", "--session-dir", sessionDir]);
+    if (schedule.model) args.push("--model", schedule.model);
+    if (schedule.thinking) args.push("--thinking", schedule.thinking);
+    if (schedule.readonly) args.push("--tools", "read,grep,find,ls");
+    args.push(schedule.prompt);
+    const alias = `${schedule.name} · ${formatReykjavikMinute(scheduledAt)}`;
+    const run = spawnPiRun({ kind: "start", cwd: schedule.cwd, sessionDir, args, prompt: schedule.prompt, schedule: { scheduleId: schedule.id, scheduleRunId: scheduleRun.id, alias } });
+    scheduleRun.run_id = run.run_id;
+    scheduleRun.session_id = run.session_id;
+    advanceSchedule(schedule, scheduledAt);
+    return { schedule, schedule_run: scheduleRun, agent_run: run };
+  } catch (error) {
+    scheduleRun.status = "failed";
+    scheduleRun.finished_at = new Date().toISOString();
+    scheduleRun.error = error instanceof Error ? error.message : String(error);
+    advanceSchedule(schedule, scheduledAt);
+    return { schedule, schedule_run: scheduleRun };
+  }
+}
+
+function scheduleHasActiveRun(schedule) {
+  return (schedule.history || []).some(item => item.status === "running" && item.run_id && runs.get(item.run_id)?.status === "running");
+}
+
+function addScheduleHistory(schedule, patch) {
+  const run = { id: `sr_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`, finished_at: "", run_id: "", session_id: "", error: "", ...patch };
+  schedule.history = [run, ...(schedule.history || [])].slice(0, 50);
+  schedule.updated_at = new Date().toISOString();
+  return run;
+}
+
+function advanceSchedule(schedule, scheduledAt) {
+  if (schedule.kind === "one-off") {
+    schedule.enabled = false;
+    schedule.next_fire_at = "";
+  } else {
+    schedule.next_fire_at = computeNextFire(schedule, new Date(Math.max(Date.now(), Date.parse(scheduledAt) + 60_000))) || "";
+  }
+  schedule.updated_at = new Date().toISOString();
+}
+
+async function updateScheduleRunSession(scheduleId, scheduleRunId, run) {
+  const store = await readScheduleStore();
+  const item = findScheduleRun(store, scheduleId, scheduleRunId);
+  if (!item) return;
+  item.scheduleRun.run_id = run.run_id;
+  item.scheduleRun.session_id = run.session_id;
+  await writeScheduleStore(store);
+}
+
+async function finalizeScheduleRun(scheduleId, scheduleRunId, run) {
+  const store = await readScheduleStore();
+  const item = findScheduleRun(store, scheduleId, scheduleRunId);
+  if (!item) return;
+  item.scheduleRun.status = run.status === "exited" ? "launched" : "failed";
+  item.scheduleRun.finished_at = run.finished_at || new Date().toISOString();
+  item.scheduleRun.run_id = run.run_id;
+  item.scheduleRun.session_id = run.session_id;
+  item.scheduleRun.error = run.status === "failed" || run.status === "error" ? (run.stderr_tail || `pi exited with ${run.exit_code}`) : "";
+  await writeScheduleStore(store);
+}
+
+function findScheduleRun(store, scheduleId, scheduleRunId) {
+  const schedule = store.schedules.find(item => item.id === scheduleId);
+  const scheduleRun = schedule?.history?.find(item => item.id === scheduleRunId);
+  return schedule && scheduleRun ? { schedule, scheduleRun } : null;
+}
+
+function computeNextFire(schedule, from) {
+  if (schedule.kind === "one-off") {
+    if (!schedule.run_at) return "";
+    return schedule.enabled || Date.parse(schedule.run_at) >= from.getTime() ? schedule.run_at : "";
+  }
+  const cron = parseCron(schedule.cron);
+  let cursor = new Date(from.getTime() + 60_000);
+  cursor.setUTCSeconds(0, 0);
+  const deadline = from.getTime() + 366 * 24 * 60 * 60 * 1000;
+  while (cursor.getTime() <= deadline) {
+    if (cron.minutes.has(cursor.getUTCMinutes()) && cron.hours.has(cursor.getUTCHours()) && cron.dom.has(cursor.getUTCDate()) && cron.months.has(cursor.getUTCMonth() + 1) && cron.dow.has(cursor.getUTCDay())) return cursor.toISOString();
+    cursor = new Date(cursor.getTime() + 60_000);
+  }
+  throw httpError(400, "cron has no occurrence in the next year");
+}
+
+function parseCron(expression) {
+  const parts = String(expression || "").trim().split(/\s+/);
+  if (parts.length !== 5) throw httpError(400, "cron must have 5 fields");
+  return {
+    minutes: parseCronField(parts[0], 0, 59),
+    hours: parseCronField(parts[1], 0, 23),
+    dom: parseCronField(parts[2], 1, 31),
+    months: parseCronField(parts[3], 1, 12),
+    dow: parseCronField(parts[4], 0, 7, value => value === 7 ? 0 : value),
+  };
+}
+
+function parseCronField(field, min, max, map = value => value) {
+  const values = new Set();
+  for (const piece of field.split(",")) {
+    if (!piece) throw httpError(400, "invalid cron field");
+    const [rangePart, stepPart] = piece.split("/");
+    const step = stepPart === undefined ? 1 : Number(stepPart);
+    if (!Number.isInteger(step) || step < 1) throw httpError(400, "invalid cron step");
+    let start;
+    let end;
+    if (rangePart === "*") {
+      start = min; end = max;
+    } else if (rangePart.includes("-")) {
+      const [a, b] = rangePart.split("-").map(Number);
+      start = a; end = b;
+    } else {
+      start = Number(rangePart); end = Number(rangePart);
+    }
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) throw httpError(400, "invalid cron range");
+    for (let value = start; value <= end; value += step) values.add(map(value));
+  }
+  return values;
+}
+
+function formatReykjavikMinute(value) {
+  const date = new Date(value);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 async function saveAttachments(attachments, cwd) {
   if (!attachments) return [];
   if (!Array.isArray(attachments)) throw httpError(400, "attachments must be an array");
@@ -382,7 +718,7 @@ function promptWithAttachments(prompt, attachments) {
   return `${prompt}\n\nAttached files saved on the dashboard host:\n${lines.join("\n")}\n\nUse the file paths above when you need to inspect the attachments.`;
 }
 
-function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "" }) {
+function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "", schedule = null }) {
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
   const run = {
@@ -408,26 +744,34 @@ function spawnPiRun({ kind, cwd, sessionDir, args, prompt, sessionId = "" }) {
     run.status = "error";
     run.finished_at = new Date().toISOString();
     run.stderr_tail = tail(`${run.stderr_tail}\n${error.message}`);
+    if (schedule) void finalizeScheduleRun(schedule.scheduleId, schedule.scheduleRunId, run);
   });
   child.on("exit", code => {
     run.status = code === 0 ? "exited" : "failed";
     run.exit_code = code;
     run.finished_at = new Date().toISOString();
-    void attachNewestSession(run, startedAt);
+    void attachNewestSession(run, startedAt, schedule?.alias).then(() => {
+      if (schedule) return finalizeScheduleRun(schedule.scheduleId, schedule.scheduleRunId, run);
+    });
   });
 
-  void attachNewestSession(run, startedAt);
+  void attachNewestSession(run, startedAt, schedule?.alias).then(() => {
+    if (schedule) return updateScheduleRunSession(schedule.scheduleId, schedule.scheduleRunId, run);
+  });
   return run;
 }
 
-async function attachNewestSession(run, startedAt) {
+async function attachNewestSession(run, startedAt, alias = "") {
   if (run.session_id) return;
   const deadline = Date.now() + 10_000;
   while (!run.session_id && Date.now() < deadline) {
     const newest = await newestSession(run.session_dir, startedAt).catch(() => null);
     if (newest) {
       run.session_id = newest.id;
-      if (run.kind === "start") await assignDefaultSessionName(newest.id);
+      if (run.kind === "start") {
+        if (alias) await assignSessionName(newest.id, alias);
+        else await assignDefaultSessionName(newest.id);
+      }
       return;
     }
     await sleep(300);
@@ -468,6 +812,15 @@ async function assignDefaultSessionName(sessionId) {
   const names = await readSessionNames();
   if (names[sessionId]) return;
   names[sessionId] = randomTennisPlayer(names);
+  await writeSessionNames(names);
+}
+
+async function assignSessionName(sessionId, name) {
+  if (!/^[A-Za-z0-9_.:T-]+$/.test(sessionId)) return;
+  const trimmed = String(name || "").trim().slice(0, 80);
+  if (!trimmed) return;
+  const names = await readSessionNames();
+  names[sessionId] = trimmed;
   await writeSessionNames(names);
 }
 

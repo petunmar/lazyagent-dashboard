@@ -15,6 +15,7 @@ The app combines lazyagent's HTTP/SSE API with a small local backend that can re
 - Browser-side lazyagent token derivation from the API passphrase
 - Widget runtime for add-on dashboard capabilities
 - Question Queue Widget for pending agent questions
+- Core Schedules for one-off and recurring agent launches
 
 ## Privacy and security
 
@@ -90,6 +91,7 @@ The backend uses environment variables for local paths and limits:
 | `EXTENSION_PORT` | `5174` | Backend port |
 | `PI_SESSIONS_DIR` | `~/.pi/agent/sessions` | Root directory for pi JSONL sessions |
 | `SESSION_NAMES_FILE` | `~/.pi/lazyagent-extension/session-names.json` | Local session alias store |
+| `SCHEDULES_FILE` | `~/.pi/lazyagent-extension/schedules.json` | Local Schedule definitions and bounded Schedule Run history |
 | `DASHBOARD_SYSTEM_PROMPT_FILE` | `~/.pi/lazyagent-extension/system-prompt.md` | Editable Dashboard System Prompt storage used by the skills + extensions page |
 | `WIDGETS_DIR` | `./widgets` | Widget folders to load, separated by the platform path delimiter |
 | `WIDGET_STATE_DIR` | `~/.pi/lazyagent-extension/widgets` | Local Widget state directory |
@@ -161,6 +163,11 @@ GET  /api/widgets/status
 POST /api/agents/start
 POST /api/agents/message
 GET  /api/agent-runs
+GET  /api/schedules
+POST /api/schedules
+PUT  /api/schedules/:scheduleId
+DELETE /api/schedules/:scheduleId
+POST /api/schedules/:scheduleId/run
 ```
 
 Widgets can add their own local API below `/api/widgets/:widgetId/*` and static frontend assets below `/widgets/:widgetId/*`. The bundled Question Queue Widget imports only explicit `lazyagent-question` fenced JSON schemas from assistant transcript text; it does not import `ask_user_question` tool calls. It exposes:

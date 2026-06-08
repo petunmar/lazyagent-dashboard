@@ -1,4 +1,4 @@
-import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PendingAttachment, PiResourcesPayload, RawSessionEvents, SavedAttachment, SessionDetail, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
+import type { AgentRun, AuthInfo, DirectoryListing, GitInfo, PendingAttachment, PiResourcesPayload, RawSessionEvents, SavedAttachment, Schedule, SchedulePayload, ScheduleRun, SessionDetail, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, WidgetManifest, WidgetStatus } from "./types";
 import { extensionApiBase } from "./utils";
 
 export class LazyagentBrowserClient {
@@ -127,6 +127,34 @@ export async function fetchAgentRuns(): Promise<AgentRun[]> {
   const res = await fetch(`${extensionApiBase()}/api/agent-runs`);
   if (!res.ok) throw new Error(`runs failed: ${res.status}`);
   return ((await res.json()) as { runs: AgentRun[] }).runs;
+}
+
+export async function fetchSchedules(): Promise<SchedulePayload> {
+  const res = await fetch(`${extensionApiBase()}/api/schedules`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function saveSchedule(schedule: Partial<Schedule>): Promise<Schedule> {
+  const endpoint = schedule.id ? `/api/schedules/${encodeURIComponent(schedule.id)}` : "/api/schedules";
+  const res = await fetch(`${extensionApiBase()}${endpoint}`, {
+    method: schedule.id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(schedule),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return ((await res.json()) as { schedule: Schedule }).schedule;
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const res = await fetch(`${extensionApiBase()}/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function runScheduleNow(id: string): Promise<{ schedule: Schedule; schedule_run: ScheduleRun; agent_run?: AgentRun }> {
+  const res = await fetch(`${extensionApiBase()}/api/schedules/${encodeURIComponent(id)}/run`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function fetchPiResources(cwd: string): Promise<PiResourcesPayload> {

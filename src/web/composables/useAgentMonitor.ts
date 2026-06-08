@@ -1,6 +1,6 @@
 import { computed, nextTick, reactive } from "vue";
-import { cleanSharedDocuments, fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSharedDocuments, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
-import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, SessionDetail, SessionFilter, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
+import { cleanSharedDocuments, deleteSchedule, fetchAgentRuns, fetchDirectory, fetchGitInfo, fetchPiResources, fetchRecentSessions, fetchSchedules, fetchSessionEvents, fetchSessionNames, fetchSessionSummary, fetchSharedDocuments, fetchSpend, fetchSystemPrompt, fetchWidgets, fetchWidgetStatuses, LazyagentBrowserClient, renameSession, runScheduleNow, saveSchedule, saveSystemPrompt, submitAgent, uploadAttachments } from "../api";
+import type { AgentRun, DirectoryPickerState, EventsUpdate, GitInfo, ModalType, PendingAttachment, PiResourceKind, PiResourcesPayload, QueuedMessage, RawSessionEvents, SavedAttachment, Schedule, SessionDetail, SessionFilter, SessionItem, SharedDocument, SpendSummary, Stats, SystemPromptConfig, ToolSparkItem, TranscriptMode, ViewMode, WidgetManifest, WidgetStatus } from "../types";
 import { extractToolNames, matchesFilter, sortSessions } from "../utils";
 
 type State = {
@@ -43,10 +43,16 @@ type State = {
   widgetStatuses: WidgetStatus[];
   widgetFrameHeights: Record<string, number>;
   messageQueue: QueuedMessage[];
+  schedules: Schedule[];
+  schedulesGeneratedAt: string;
+  schedulesLoading: boolean;
+  schedulesStatus: string;
 };
 
 function initialView(): ViewMode {
-  return location.pathname.startsWith("/pi-resources") ? "pi-resources" : "dashboard";
+  if (location.pathname.startsWith("/pi-resources")) return "pi-resources";
+  if (location.pathname.startsWith("/schedules")) return "schedules";
+  return "dashboard";
 }
 
 function isLocalHost(): boolean {
@@ -98,6 +104,10 @@ const state = reactive<State>({
   widgetStatuses: [],
   widgetFrameHeights: {},
   messageQueue: loadMessageQueue(),
+  schedules: [],
+  schedulesGeneratedAt: "",
+  schedulesLoading: false,
+  schedulesStatus: "",
 });
 
 let client: LazyagentBrowserClient | null = null;
@@ -146,6 +156,7 @@ export function useAgentMonitor() {
       state.modal = null;
       await loadWidgets();
       await loadSharedDocuments();
+      await loadSchedules();
       await refresh();
       connectEvents();
     } catch (error) {
@@ -172,6 +183,7 @@ export function useAgentMonitor() {
       void loadWidgetStatuses();
       void loadSpend();
       void loadSharedDocuments();
+      void loadSchedules();
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
     }
@@ -179,9 +191,10 @@ export function useAgentMonitor() {
 
   function navigateTo(view: ViewMode): void {
     state.view = view;
-    const target = view === "pi-resources" ? "/pi-resources" : "/";
+    const target = view === "pi-resources" ? "/pi-resources" : view === "schedules" ? "/schedules" : "/";
     if (location.pathname !== target) history.pushState({ view }, "", target);
     if (view === "pi-resources") void loadPiResources();
+    if (view === "schedules") void loadSchedules();
   }
 
   function selectSession(id: string): void {
@@ -518,6 +531,55 @@ export function useAgentMonitor() {
     state.directoryPicker.open = false;
   }
 
+  async function loadSchedules(): Promise<void> {
+    state.schedulesLoading = true;
+    try {
+      const payload = await fetchSchedules();
+      state.schedules = payload.schedules;
+      state.schedulesGeneratedAt = payload.generated_at;
+      state.schedulesStatus = "";
+    } catch (error) {
+      state.schedulesStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.schedulesLoading = false;
+    }
+  }
+
+  async function persistSchedule(schedule: Partial<Schedule>): Promise<boolean> {
+    try {
+      const saved = await saveSchedule(schedule);
+      state.schedules = [saved, ...state.schedules.filter(item => item.id !== saved.id)].sort((a, b) => (a.next_fire_at || "9999").localeCompare(b.next_fire_at || "9999"));
+      state.schedulesStatus = "saved";
+      return true;
+    } catch (error) {
+      state.schedulesStatus = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+  }
+
+  async function removeSchedule(id: string): Promise<void> {
+    try {
+      await deleteSchedule(id);
+      state.schedules = state.schedules.filter(schedule => schedule.id !== id);
+      state.schedulesStatus = "deleted";
+    } catch (error) {
+      state.schedulesStatus = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function runSchedule(id: string): Promise<void> {
+    try {
+      const payload = await runScheduleNow(id);
+      state.schedules = [payload.schedule, ...state.schedules.filter(schedule => schedule.id !== id)].sort((a, b) => (a.next_fire_at || "9999").localeCompare(b.next_fire_at || "9999"));
+      if (payload.agent_run) state.runs = [payload.agent_run, ...state.runs.filter(run => run.run_id !== payload.agent_run?.run_id)];
+      state.schedulesStatus = "run started";
+      window.setTimeout(() => void loadSchedules(), 1500);
+      window.setTimeout(() => void refreshRuns(), 1000);
+    } catch (error) {
+      state.schedulesStatus = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   async function loadPiResources(force = false): Promise<void> {
     if (state.piResourcesLoading || (state.piResources && !force)) return;
     state.piResourcesLoading = true;
@@ -572,6 +634,7 @@ export function useAgentMonitor() {
   function handlePopstate(): void {
     state.view = initialView();
     if (state.view === "pi-resources") void loadPiResources();
+    if (state.view === "schedules") void loadSchedules();
   }
 
   function clearSelectedPayload(): void {
@@ -657,6 +720,10 @@ export function useAgentMonitor() {
     refreshRuns,
     openDirectoryPicker,
     selectDirectory,
+    loadSchedules,
+    persistSchedule,
+    removeSchedule,
+    runSchedule,
     loadPiResources,
     loadSharedDocuments,
     cleanDocuments,

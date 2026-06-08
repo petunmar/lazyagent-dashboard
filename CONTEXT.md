@@ -18,3 +18,5 @@
 - **Voice Mode** — a continuous Question Queue interaction mode where Agent questions are spoken aloud, user answers can be captured by speech, and the queue advances through Pending Questions until none remain or the user exits.
 - **Pending Question** — an unanswered question from one Agent to the user; it belongs to exactly one Agent until answered.
 - **Question Schema** — the explicit transcript format an Agent writes to create a Pending Question for the Question Queue. The schema must include options; generic tool calls are not questions for the dashboard.
+- **Schedule** — a configured one-off or recurring time-based trigger that launches a normal Agent run at a future time. Avoid: Scheduled Agent, Automation.
+- **Schedule Run** — one recorded execution outcome for a Schedule, including successful launches, failures, skipped overlaps, and manual runs.

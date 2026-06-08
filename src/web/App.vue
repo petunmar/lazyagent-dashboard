@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from "vue";
 import DashboardView from "./components/DashboardView.vue";
 import DetailView from "./components/DetailView.vue";
 import PiResourcesView from "./components/PiResourcesView.vue";
+import SchedulesView from "./components/SchedulesView.vue";
 import CommandModal from "./components/CommandModal.vue";
 import { useAgentMonitor } from "./composables/useAgentMonitor";
 import { formatCompact, formatMoney, summarizeSessions } from "./utils";
@@ -11,7 +12,7 @@ const monitor = useAgentMonitor();
 const { state } = monitor;
 const summary = computed(() => summarizeSessions(state.sessions));
 const now = computed(() => new Date());
-const subtitle = computed(() => state.view === "detail" ? "session detail" : state.view === "pi-resources" ? "skills + extensions" : "multi-agent dashboard");
+const subtitle = computed(() => state.view === "detail" ? "session detail" : state.view === "pi-resources" ? "skills + extensions" : state.view === "schedules" ? "schedules" : "multi-agent dashboard");
 const totalTokens = computed(() => state.spend?.today_tokens ?? 0);
 const totalCost = computed(() => state.spend?.today_usd ?? 0);
 const maxDailyTokens = computed(() => Math.max(...(state.spend?.daily.map(day => day.tokens) || [0]), 1));
@@ -41,14 +42,16 @@ onMounted(() => {
   window.addEventListener("popstate", monitor.handlePopstate);
   monitor.useManagedProxy();
   void monitor.loadWidgets();
+  void monitor.loadSchedules();
   if (!state.connected && state.baseUrl.startsWith("/")) void monitor.connect(state.baseUrl, state.passphrase);
   if (state.view === "pi-resources") void monitor.loadPiResources();
+  if (state.view === "schedules") void monitor.loadSchedules();
 });
 onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate));
 </script>
 
 <template>
-  <main class="monitor-shell" :class="{ 'detail-view': state.view === 'detail', 'resources-view': state.view === 'pi-resources' }">
+  <main class="monitor-shell" :class="{ 'detail-view': state.view === 'detail', 'resources-view': state.view === 'pi-resources', 'schedules-view': state.view === 'schedules' }">
     <header class="monitor-topbar">
       <div class="brand-lockup">
         <button class="brand-mark" type="button" aria-label="Back to dashboard" @click="monitor.navigateTo('dashboard')">A</button>
@@ -90,6 +93,7 @@ onUnmounted(() => window.removeEventListener("popstate", monitor.handlePopstate)
 
     <DetailView v-if="state.view === 'detail'" :monitor="monitor" />
     <PiResourcesView v-else-if="state.view === 'pi-resources'" :monitor="monitor" />
+    <SchedulesView v-else-if="state.view === 'schedules'" :monitor="monitor" />
     <DashboardView v-else :monitor="monitor" />
     <CommandModal v-if="state.modal" :monitor="monitor" />
   </main>
