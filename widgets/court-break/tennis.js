@@ -48,7 +48,7 @@ function postHeight() {
     type: "lazyagent-widget-height",
     widget: "court-break",
     slot: params.get("slot") || "detail:top",
-    height: hasPlayed ? Math.ceil(document.documentElement.scrollHeight) : 0
+    height: hasPlayed && !resting ? Math.ceil(document.documentElement.scrollHeight) : 0
   }, "*");
 }
 
@@ -299,6 +299,7 @@ function updateRestState(dt) {
     restReminder?.setAttribute("aria-hidden", "true");
     commentaryEl.textContent = quips[Math.floor(Math.random() * quips.length)];
   }
+  requestAnimationFrame(postHeight);
 }
 
 function loop(now) {
@@ -338,6 +339,7 @@ function onSessionState(message) {
       document.body.classList.remove("agent-resting");
       restReminder?.setAttribute("aria-hidden", "true");
       commentaryEl.textContent = "Agent is moving again. Ball is live.";
+      requestAnimationFrame(postHeight);
     }
   } else if (hasPlayed) {
     requestAnimationFrame(postHeight);

@@ -25,10 +25,7 @@ body:not(.has-played) .court-shell {
   display: none;
 }
 body.agent-resting .court-shell {
-  opacity: 0.18;
-  transform: translateY(10px) scale(0.985);
-  filter: grayscale(0.75) blur(1px);
-  pointer-events: none;
+  display: none;
 }
 .court-shell::before {
   content: "";
