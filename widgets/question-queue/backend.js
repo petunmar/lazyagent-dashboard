@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || "";
@@ -7,6 +7,7 @@ const elevenLabsVoiceIdOverride = process.env.ELEVENLABS_VOICE_ID || "";
 const elevenLabsTtsModel = process.env.ELEVENLABS_TTS_MODEL || "eleven_flash_v2_5";
 const elevenLabsSttModel = process.env.ELEVENLABS_STT_MODEL || "scribe_v1";
 let resolvedVoiceId = "";
+const stateOperations = new Map();
 
 export const systemPrompt = `This Agent Monitor installation has a Question Queue Widget for dashboard-mediated user questions.
 
@@ -21,31 +22,43 @@ Use this schema:
 Rules: include at least one option; keep values short and stable; do not also restate the question outside the fenced block; after writing the block, wait for the dashboard follow-up unless you can continue safely without the answer.`;
 
 export async function status(context) {
-  const questions = await syncedQuestions(context);
-  const pending = questions.filter(question => question.status === "pending");
-  return {
-    pending: pending.length,
-    session_highlights: [...new Set(pending.map(question => question.session_id).filter(Boolean))],
-  };
+  return withStateLock(context.stateDir, async () => {
+    const questions = await syncedQuestions(context);
+    const pending = questions.filter(question => question.status === "pending");
+    return {
+      pending: pending.length,
+      session_highlights: [...new Set(pending.map(question => question.session_id).filter(Boolean))],
+    };
+  });
 }
 
 export async function handle(req, res, url, context) {
   if (req.method === "GET" && url.pathname === "/questions") {
-    context.writeJson(res, 200, { questions: await syncedQuestions(context) });
+    const questions = await withStateLock(context.stateDir, () => syncedQuestions(context));
+    context.writeJson(res, 200, { questions });
     return true;
   }
 
   if (req.method === "POST" && url.pathname === "/questions") {
     const body = await context.readJson(req);
-    const question = await createQuestion(context.stateDir, body, context.httpError);
+    const question = await withStateLock(context.stateDir, () => createQuestion(context.stateDir, body, context.httpError));
     context.writeJson(res, 201, { question });
+    return true;
+  }
+
+  const dismissMatch = url.pathname.match(/^\/questions\/([^/]+)\/dismiss$/);
+  if (req.method === "POST" && dismissMatch) {
+    const id = decodeQuestionId(dismissMatch[1], context.httpError);
+    const question = await withStateLock(context.stateDir, () => dismissQuestion(context, id));
+    context.writeJson(res, 200, { question });
     return true;
   }
 
   const answerMatch = url.pathname.match(/^\/questions\/([^/]+)\/answer$/);
   if (req.method === "POST" && answerMatch) {
     const body = await context.readJson(req);
-    const question = await answerQuestion(context, decodeURIComponent(answerMatch[1]), body);
+    const id = decodeQuestionId(answerMatch[1], context.httpError);
+    const question = await withStateLock(context.stateDir, () => answerQuestion(context, id, body));
     context.writeJson(res, 200, { question });
     return true;
   }
@@ -74,10 +87,30 @@ export async function handle(req, res, url, context) {
   return false;
 }
 
+function decodeQuestionId(value, httpError) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw httpError(400, "question id is malformed");
+  }
+}
+
+async function withStateLock(stateDir, operation) {
+  const previous = stateOperations.get(stateDir) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  stateOperations.set(stateDir, current);
+  try {
+    return await current;
+  } finally {
+    if (stateOperations.get(stateDir) === current) stateOperations.delete(stateDir);
+  }
+}
+
 async function syncedQuestions(context) {
   const storedQuestions = await readQuestions(context.stateDir);
-  const questions = storedQuestions.filter(question => question.source !== "ask_user_question");
-  const existing = new Set(questions.map(question => question.id));
+  // Keep dismissed legacy records as tombstones even though ask_user_question imports are no longer shown.
+  const questions = storedQuestions.filter(question => question.source !== "ask_user_question" || question.status === "dismissed");
+  const tombstones = await readQuestionTombstones(context.stateDir);
   const candidates = typeof context.listAgentSessionTranscripts === "function" ? await listQuestionCandidates(context) : [];
   let changed = false;
   for (const candidate of candidates) {
@@ -92,6 +125,7 @@ async function syncedQuestions(context) {
       }
       continue;
     }
+    if (tombstones.has(candidate.id)) continue;
     questions.unshift({
       id: candidate.id,
       session_id: candidate.session_id,
@@ -105,11 +139,14 @@ async function syncedQuestions(context) {
       answered_at: candidate.chat_answer?.answered_at || "",
       source: candidate.chat_answer?.text ? "question_schema_chat_answer" : "question_schema",
     });
-    existing.add(candidate.id);
     changed = true;
   }
   questions.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-  if (changed || questions.length !== storedQuestions.length) await writeQuestions(context.stateDir, questions);
+  const needsRetention = questions.filter(question => question.status === "answered").length > 200;
+  if (changed || questions.length !== storedQuestions.length || needsRetention) {
+    await writeQuestions(context.stateDir, questions);
+    return readQuestions(context.stateDir);
+  }
   return questions;
 }
 
@@ -237,25 +274,40 @@ async function createQuestion(stateDir, body, httpError) {
   return question;
 }
 
-async function answerQuestion(context, id, body) {
+async function dismissQuestion(context, id) {
   await syncedQuestions(context);
-  const answer = String(body?.answer || "").trim();
-  if (!answer) throw context.httpError(400, "answer is required");
-
   const questions = await readQuestions(context.stateDir);
   const question = questions.find(item => item.id === id);
   if (!question) throw context.httpError(404, "question not found");
-  if (question.status !== "answered") {
-    question.status = "answered";
-    question.answer = answer;
-    question.answered_at = new Date().toISOString();
-    await context.sendAgentMessage({
-      cwd: question.cwd,
-      session_id: question.session_id,
-      prompt: `Answer to your pending question:\n\nQuestion: ${question.question}\n\nAnswer: ${answer}`,
-    });
-    await writeQuestions(context.stateDir, questions);
-  }
+  if (question.status === "dismissed") return question;
+  if (question.status !== "pending") throw context.httpError(409, "only pending questions can be dismissed");
+
+  question.status = "dismissed";
+  question.dismissed_at = new Date().toISOString();
+  await writeQuestions(context.stateDir, questions);
+  return question;
+}
+
+async function answerQuestion(context, id, body) {
+  await syncedQuestions(context);
+  const questions = await readQuestions(context.stateDir);
+  const question = questions.find(item => item.id === id);
+  if (!question) throw context.httpError(404, "question not found");
+  if (question.status === "dismissed") throw context.httpError(409, "dismissed questions cannot be answered");
+  if (question.status === "answered") return question;
+  if (question.status !== "pending") throw context.httpError(409, "question is not pending");
+
+  const answer = String(body?.answer || "").trim();
+  if (!answer) throw context.httpError(400, "answer is required");
+  question.status = "answered";
+  question.answer = answer;
+  question.answered_at = new Date().toISOString();
+  await context.sendAgentMessage({
+    cwd: question.cwd,
+    session_id: question.session_id,
+    prompt: `Answer to your pending question:\n\nQuestion: ${question.question}\n\nAnswer: ${answer}`,
+  });
+  await writeQuestions(context.stateDir, questions);
   return question;
 }
 
@@ -367,12 +419,52 @@ async function readQuestions(stateDir) {
 }
 
 async function writeQuestions(stateDir, questions) {
+  const retained = [];
+  const droppedAnsweredIds = [];
+  let answeredCount = 0;
+  for (const question of questions) {
+    if (question.status === "answered") {
+      answeredCount += 1;
+      if (answeredCount > 200) {
+        droppedAnsweredIds.push(question.id);
+        continue;
+      }
+    }
+    retained.push(question);
+  }
+
   await mkdir(stateDir, { recursive: true });
-  await writeFile(storeFile(stateDir), `${JSON.stringify(questions.slice(0, 200), null, 2)}\n`);
+  if (droppedAnsweredIds.length) {
+    const tombstones = await readQuestionTombstones(stateDir);
+    for (const id of droppedAnsweredIds) tombstones.add(id);
+    // Write suppression IDs first, so an interrupted retention write cannot re-import old transcripts.
+    await atomicWriteJson(tombstoneFile(stateDir), [...tombstones]);
+  }
+  await atomicWriteJson(storeFile(stateDir), retained);
+}
+
+async function readQuestionTombstones(stateDir) {
+  try {
+    const parsed = JSON.parse(await readFile(tombstoneFile(stateDir), "utf8"));
+    return new Set(Array.isArray(parsed) ? parsed.filter(id => typeof id === "string") : []);
+  } catch (error) {
+    if (error.code === "ENOENT") return new Set();
+    throw error;
+  }
+}
+
+async function atomicWriteJson(file, value) {
+  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporary, file);
 }
 
 function storeFile(stateDir) {
   return path.join(stateDir, "questions.json");
+}
+
+function tombstoneFile(stateDir) {
+  return path.join(stateDir, "question-tombstones.json");
 }
 
 function isQuestion(value) {
