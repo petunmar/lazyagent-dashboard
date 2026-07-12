@@ -10,6 +10,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "start": "node src/backend/server.js",
     "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test",
     "sessions": "node examples/list-sessions.js",
     "watch": "node examples/watch-sessions.js",
     "hash-password": "node scripts/hash-password.js"

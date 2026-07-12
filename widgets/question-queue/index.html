@@ -11,10 +11,11 @@
     <header>
       <div>
         <p class="eyebrow">widget</p>
-        <h1>Question Queue</h1>
+        <h1 id="queue-heading" tabindex="-1">Question Queue</h1>
       </div>
       <strong id="badge">0 pending</strong>
     </header>
+    <p id="queue-status" class="sr-only" role="status" aria-live="polite"></p>
     <p id="empty" class="empty">No pending questions.</p>
     <div id="questions" class="questions"></div>
   </section>
